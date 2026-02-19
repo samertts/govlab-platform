@@ -198,13 +198,27 @@ export async function registerRoutes(
   });
 
   // Results
+  app.get(api.results.listAuditLogs.path, requireAuth, async (req, res) => {
+    const logs = await storage.getAuditLogsByResult(Number(req.params.id));
+    res.json(logs);
+  });
+
   app.patch(api.results.update.path, requireAuth, async (req, res) => {
     try {
       const input = api.results.update.input.parse(req.body);
+      const oldResult = await storage.getTestResult(Number(req.params.id));
       const result = await storage.updateTestResult(Number(req.params.id), input.resultValue, input.notes);
       
-      // Auto-update sample status to 'processing' if it was 'collected'
-      if (result) {
+      if (result && req.user) {
+        await storage.createAuditLog({
+          userId: (req.user as User).id,
+          testResultId: result.id,
+          oldValue: oldResult?.resultValue || null,
+          newValue: result.resultValue,
+          action: "edit"
+        });
+
+        // Auto-update sample status to 'processing' if it was 'collected'
         const sample = await storage.getSample(result.sampleId);
         if (sample && sample.status === "collected") {
           await storage.updateSampleStatus(result.sampleId, "processing");
@@ -225,13 +239,19 @@ export async function registerRoutes(
     // In a real app, check if user is pathologist/admin
     if (!req.user) return res.sendStatus(401);
     
-    // Check role
-    // @ts-ignore
-    // if (req.user.role !== 'pathologist' && req.user.role !== 'admin') {
-    //   return res.status(403).json({ message: "Only pathologists can verify results" });
-    // }
-
+    const oldResult = await storage.getTestResult(Number(req.params.id));
     const result = await storage.verifyTestResult(Number(req.params.id), (req.user as User).id);
+    
+    if (result) {
+      await storage.createAuditLog({
+        userId: (req.user as User).id,
+        testResultId: result.id,
+        oldValue: oldResult?.status || null,
+        newValue: result.status,
+        action: "verify"
+      });
+    }
+
     if (!result) return res.status(404).json({ message: "Result not found" });
     res.json(result);
   });

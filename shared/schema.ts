@@ -67,7 +67,29 @@ export const testResults = pgTable("test_results", {
   verifiedAt: timestamp("verified_at"),
 });
 
+// Audit Logs
+export const auditLogs = pgTable("audit_logs", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  testResultId: integer("test_result_id").notNull().references(() => testResults.id),
+  oldValue: text("old_value"),
+  newValue: text("new_value"),
+  action: text("action").notNull(), // edit, verify
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+});
+
 // === RELATIONS ===
+export const auditLogsRelations = relations(auditLogs, ({ one }) => ({
+  user: one(users, {
+    fields: [auditLogs.userId],
+    references: [users.id],
+  }),
+  testResult: one(testResults, {
+    fields: [auditLogs.testResultId],
+    references: [testResults.id],
+  }),
+}));
+
 export const samplesRelations = relations(samples, ({ one, many }) => ({
   patient: one(patients, {
     fields: [samples.patientId],
@@ -105,6 +127,7 @@ export const insertPatientSchema = createInsertSchema(patients).omit({ id: true,
 export const insertTestTypeSchema = createInsertSchema(testTypes).omit({ id: true });
 export const insertSampleSchema = createInsertSchema(samples).omit({ id: true, createdAt: true, accessionNumber: true }); // Accession generated backend
 export const insertTestResultSchema = createInsertSchema(testResults).omit({ id: true, enteredBy: true, verifiedBy: true, verifiedAt: true });
+export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, timestamp: true });
 
 // === EXPLICIT API CONTRACT TYPES ===
 
@@ -113,12 +136,14 @@ export type Patient = typeof patients.$inferSelect;
 export type TestType = typeof testTypes.$inferSelect;
 export type Sample = typeof samples.$inferSelect;
 export type TestResult = typeof testResults.$inferSelect;
+export type AuditLog = typeof auditLogs.$inferSelect;
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type InsertPatient = z.infer<typeof insertPatientSchema>;
 export type InsertTestType = z.infer<typeof insertTestTypeSchema>;
 export type InsertSample = z.infer<typeof insertSampleSchema>;
 export type InsertTestResult = z.infer<typeof insertTestResultSchema>;
+export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
 
 // Request types
 export type CreatePatientRequest = InsertPatient;

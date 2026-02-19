@@ -1,12 +1,12 @@
 import { db } from "./db";
 import {
-  users, patients, testTypes, samples, testResults,
+  users, patients, testTypes, samples, testResults, auditLogs,
   type User, type InsertUser,
   type Patient, type InsertPatient, type UpdatePatientRequest,
   type TestType, type InsertTestType,
   type Sample, type InsertSample, type UpdateSampleRequest,
   type TestResult, type InsertTestResult,
-  type SampleWithPatient
+  type SampleWithPatient, type AuditLog, type InsertAuditLog
 } from "@shared/schema";
 import { eq, desc, and, sql } from "drizzle-orm";
 
@@ -33,10 +33,15 @@ export interface IStorage {
   updateSampleStatus(id: number, status: string): Promise<Sample | undefined>;
 
   // Results
+  getTestResult(id: number): Promise<TestResult | undefined>;
   getTestResultsBySample(sampleId: number): Promise<(TestResult & { testType: TestType })[]>;
   createTestResult(result: InsertTestResult): Promise<TestResult>;
   updateTestResult(id: number, resultValue: string, notes?: string): Promise<TestResult | undefined>;
   verifyTestResult(id: number, verifiedBy: number): Promise<TestResult | undefined>;
+
+  // Audit Logs
+  createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
+  getAuditLogsByResult(testResultId: number): Promise<(AuditLog & { user: User })[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -160,6 +165,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Results
+  async getTestResult(id: number): Promise<TestResult | undefined> {
+    const [result] = await db.select().from(testResults).where(eq(testResults.id, id));
+    return result;
+  }
+
   async getTestResultsBySample(sampleId: number): Promise<(TestResult & { testType: TestType })[]> {
     const rows = await db.select({
       result: testResults,
@@ -192,6 +202,26 @@ export class DatabaseStorage implements IStorage {
       .returning();
     return updated;
   }
+
+  // Audit Logs
+  async createAuditLog(log: InsertAuditLog): Promise<AuditLog> {
+    const [newLog] = await db.insert(auditLogs).values(log).returning();
+    return newLog;
+  }
+
+  async getAuditLogsByResult(testResultId: number): Promise<(AuditLog & { user: User })[]> {
+    const rows = await db.select({
+      log: auditLogs,
+      user: users
+    })
+    .from(auditLogs)
+    .innerJoin(users, eq(auditLogs.userId, users.id))
+    .where(eq(auditLogs.testResultId, testResultId))
+    .orderBy(desc(auditLogs.timestamp));
+
+    return rows.map(r => ({ ...r.log, user: r.user }));
+  }
 }
+
 
 export const storage = new DatabaseStorage();

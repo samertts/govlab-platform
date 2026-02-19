@@ -166,6 +166,14 @@ export const api = {
     },
   },
   results: {
+    listAuditLogs: {
+      method: 'GET' as const,
+      path: '/api/results/:id/audit-logs' as const,
+      responses: {
+        200: z.array(z.custom<AuditLog & { user: User }>()),
+        404: errorSchemas.notFound,
+      },
+    },
     update: {
       method: 'PATCH' as const,
       path: '/api/results/:id' as const,
@@ -200,3 +208,8 @@ export function buildUrl(path: string, params?: Record<string, string | number>)
   }
   return url;
 }
+
+// Add types
+import { AuditLog, User } from './schema';
+export type AuditLogWithUser = AuditLog & { user: User };
+
