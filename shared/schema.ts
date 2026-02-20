@@ -47,6 +47,7 @@ export const samples = pgTable("samples", {
   patientId: integer("patient_id").notNull().references(() => patients.id),
   accessionNumber: text("accession_number").notNull().unique(), // Unique daily ID
   barcode: text("barcode").notNull().unique(), // LAB-YYYYMMDD-XXXX
+  analyzerType: text("analyzer_type"), // CBC, Chemistry, Immunoassay, Coagulation
   collectionDate: timestamp("collection_date").defaultNow(),
   status: text("status").notNull().default("collected"), // collected, received, processing, completed, reported
   priority: text("priority").default("routine"), // routine, urgent, stat

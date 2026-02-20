@@ -153,7 +153,12 @@ export class DatabaseStorage implements IStorage {
     const accessionNumber = `${dateStr}-${randomSuffix}`;
     const barcode = `LAB-${accessionNumber}`;
     
-    const [newSample] = await db.insert(samples).values({ ...sample, accessionNumber, barcode }).returning();
+    const [newSample] = await db.insert(samples).values({ 
+      ...sample, 
+      accessionNumber, 
+      barcode,
+      analyzerType: sample.analyzerType || null
+    }).returning();
     return newSample;
   }
 
