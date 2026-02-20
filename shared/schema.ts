@@ -46,6 +46,7 @@ export const samples = pgTable("samples", {
   id: serial("id").primaryKey(),
   patientId: integer("patient_id").notNull().references(() => patients.id),
   accessionNumber: text("accession_number").notNull().unique(), // Unique daily ID
+  barcode: text("barcode").notNull().unique(), // LAB-YYYYMMDD-XXXX
   collectionDate: timestamp("collection_date").defaultNow(),
   status: text("status").notNull().default("collected"), // collected, received, processing, completed, reported
   priority: text("priority").default("routine"), // routine, urgent, stat

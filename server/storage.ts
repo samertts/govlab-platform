@@ -154,8 +154,9 @@ export class DatabaseStorage implements IStorage {
     // Simple random suffix for demo purposes, robust systems use sequences
     const randomSuffix = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
     const accessionNumber = `${dateStr}-${randomSuffix}`;
+    const barcode = `LAB-${accessionNumber}`;
     
-    const [newSample] = await db.insert(samples).values({ ...sample, accessionNumber }).returning();
+    const [newSample] = await db.insert(samples).values({ ...sample, accessionNumber, barcode }).returning();
     return newSample;
   }
 
