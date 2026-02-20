@@ -43,18 +43,23 @@ Preferred communication style: Simple, everyday language.
 - **Database**: PostgreSQL via `node-postgres` (pg) pool
 - **ORM**: Drizzle ORM with PostgreSQL dialect
 - **Schema Management**: `drizzle-kit push` for applying schema changes (no migration files workflow by default)
-- **Tables**: users, patients, testTypes, samples, testResults, auditLogs
-- **Key Relationships**: patients → samples → testResults → testTypes; auditLogs reference testResults and users
+- **Tables**: users (Replit Auth), sessions (Replit Auth), staff, patients, testTypes, samples, testResults, auditLogs
+- **Key Relationships**: patients → samples → testResults → testTypes; auditLogs reference testResults and staff; staff.replitUserId links to Replit Auth users
 
 ### Storage Layer
 - `server/storage.ts` defines an `IStorage` interface and `DatabaseStorage` implementation
 - All database access goes through this storage layer, making it testable and swappable
 
 ### Authentication & Authorization
-- Session-based auth with Passport.js LocalStrategy
-- Sessions stored in MemoryStore (suitable for development; consider connect-pg-simple for production)
-- Protected routes on client use a `PrivateRoute` wrapper that checks `/api/auth/me`
-- User roles defined: admin, pathologist, technician, receptionist
+- **Replit Auth** via OpenID Connect (OIDC) — replaces old local username/password auth
+- Sessions stored in PostgreSQL via `connect-pg-simple`
+- Auth module lives in `server/replit_integrations/auth/`
+- Auth routes: `/api/login`, `/api/logout`, `/api/auth/user`
+- Internal staff records in `staff` table link to Replit users via `replitUserId`
+- `requireAuth` middleware: validates Replit Auth session → resolves to staff record (auto-creates if first login, default role: technician)
+- Staff roles: admin, pathologist, technician, receptionist
+- Client uses `useAuth()` hook from `client/src/hooks/use-auth.ts` for auth state
+- Landing page at `/login` with "Sign In with Replit" button (no custom forms)
 
 ### Project Structure
 ```

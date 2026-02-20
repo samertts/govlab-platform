@@ -1,84 +1,78 @@
-import { useState } from "react";
-import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
-import { FlaskConical, Loader2 } from "lucide-react";
+import { FlaskConical, Shield, Activity, Users } from "lucide-react";
 import { motion } from "framer-motion";
 
-export default function Login() {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const { login, isLoggingIn } = useAuth();
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    login({ username, password });
-  };
-
+export default function Landing() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 relative overflow-hidden">
-      {/* Abstract Background Shapes */}
-      <div className="absolute top-0 left-0 w-full h-96 bg-gradient-to-br from-primary/20 to-transparent skew-y-6 transform origin-top-left" />
-      <div className="absolute bottom-0 right-0 w-full h-96 bg-gradient-to-tl from-accent/10 to-transparent -skew-y-6 transform origin-bottom-right" />
-
-      <motion.div 
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-        className="w-full max-w-md px-4 relative z-10"
-      >
-        <div className="flex justify-center mb-8">
-          <div className="bg-white p-4 rounded-2xl shadow-xl shadow-primary/10">
-            <FlaskConical className="h-10 w-10 text-primary" />
+    <div className="min-h-screen flex flex-col lg:flex-row">
+      <div className="lg:w-1/2 bg-gradient-to-br from-slate-900 via-slate-800 to-primary/30 text-white flex flex-col justify-between p-8 lg:p-12 min-h-[40vh] lg:min-h-screen">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-primary rounded-lg" data-testid="logo-icon">
+            <FlaskConical className="h-6 w-6 text-white" />
           </div>
+          <h1 className="text-xl font-bold tracking-tight">GovLab LIS</h1>
         </div>
-        
-        <Card className="border-0 shadow-2xl shadow-slate-200/50 backdrop-blur-sm bg-white/80">
-          <CardHeader className="text-center pb-2">
-            <CardTitle className="text-2xl font-bold font-display text-slate-900">Welcome Back</CardTitle>
-            <CardDescription>Enter your credentials to access the LIS</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="username">Username</Label>
-                <Input 
-                  id="username" 
-                  type="text" 
-                  placeholder="jdoe" 
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="h-11 bg-white"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <Input 
-                  id="password" 
-                  type="password" 
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="h-11 bg-white"
-                  required
-                />
-              </div>
-              <Button 
-                type="submit" 
-                className="w-full h-11 text-base mt-2 bg-primary hover:bg-primary/90 shadow-lg shadow-primary/20 transition-all hover:-translate-y-0.5"
-                disabled={isLoggingIn}
+
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className="flex-1 flex flex-col justify-center py-12"
+        >
+          <h2 className="text-3xl lg:text-4xl font-serif font-bold leading-tight mb-4">
+            Government-Grade Laboratory Information System
+          </h2>
+          <p className="text-slate-300 text-lg max-w-md">
+            Manage patient samples, track test results, and maintain full audit trails with role-based access control.
+          </p>
+
+          <div className="flex flex-wrap gap-4 mt-8">
+            <div className="flex items-center gap-2 text-sm text-slate-300">
+              <Shield className="h-4 w-4 text-primary" />
+              <span>Audit Compliant</span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-slate-300">
+              <Activity className="h-4 w-4 text-primary" />
+              <span>QC Flagging</span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-slate-300">
+              <Users className="h-4 w-4 text-primary" />
+              <span>Role-Based Access</span>
+            </div>
+          </div>
+        </motion.div>
+
+        <p className="text-xs text-slate-500">&copy; {new Date().getFullYear()} GovLab LIS. All rights reserved.</p>
+      </div>
+
+      <div className="lg:w-1/2 flex items-center justify-center p-8 lg:p-12 bg-slate-50">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.2 }}
+          className="w-full max-w-md"
+        >
+          <Card className="border-0 shadow-2xl shadow-slate-200/50 bg-white" data-testid="login-card">
+            <CardHeader className="text-center pb-2">
+              <CardTitle className="text-2xl font-bold text-slate-900" data-testid="text-welcome">Welcome</CardTitle>
+              <CardDescription>Sign in to access the Laboratory Information System</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-6">
+              <Button
+                asChild
+                className="w-full h-12 text-base bg-primary hover:bg-primary/90 shadow-lg shadow-primary/20 transition-all hover:-translate-y-0.5"
+                data-testid="button-login"
               >
-                {isLoggingIn ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Sign In"}
+                <a href="/api/login">Sign In with Replit</a>
               </Button>
-            </form>
-          </CardContent>
-          <CardFooter className="text-center justify-center text-xs text-muted-foreground">
-            Protected Government System. Authorized Access Only.
-          </CardFooter>
-        </Card>
-      </motion.div>
+            </CardContent>
+            <CardFooter className="text-center justify-center text-xs text-muted-foreground" data-testid="text-footer">
+              Protected Government System. Authorized Access Only.
+            </CardFooter>
+          </Card>
+        </motion.div>
+      </div>
     </div>
   );
 }

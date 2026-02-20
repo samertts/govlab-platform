@@ -1,7 +1,7 @@
 import { db } from "./db";
 import {
-  users, patients, testTypes, samples, testResults, auditLogs,
-  type User, type InsertUser,
+  staff, patients, testTypes, samples, testResults, auditLogs,
+  type Staff, type InsertStaff,
   type Patient, type InsertPatient, type UpdatePatientRequest,
   type TestType, type InsertTestType,
   type Sample, type InsertSample, type UpdateSampleRequest,
@@ -11,10 +11,12 @@ import {
 import { eq, desc, and, sql } from "drizzle-orm";
 
 export interface IStorage {
-  // Users
-  getUser(id: number): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  // Staff
+  getStaffMember(id: number): Promise<Staff | undefined>;
+  getStaffByUsername(username: string): Promise<Staff | undefined>;
+  getStaffByReplitUserId(replitUserId: string): Promise<Staff | undefined>;
+  createStaffMember(member: InsertStaff): Promise<Staff>;
+  findOrCreateStaffByReplitUser(replitUserId: string, name: string): Promise<Staff>;
 
   // Patients
   getPatients(search?: string): Promise<Patient[]>;
@@ -41,24 +43,48 @@ export interface IStorage {
 
   // Audit Logs
   createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
-  getAuditLogsByResult(testResultId: number): Promise<(AuditLog & { user: User })[]>;
+  getAuditLogsByResult(testResultId: number): Promise<(AuditLog & { staffMember: Staff })[]>;
 }
 
 export class DatabaseStorage implements IStorage {
-  // Users
-  async getUser(id: number): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.id, id));
-    return user;
+  // Staff
+  async getStaffMember(id: number): Promise<Staff | undefined> {
+    const [member] = await db.select().from(staff).where(eq(staff.id, id));
+    return member;
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.username, username));
-    return user;
+  async getStaffByUsername(username: string): Promise<Staff | undefined> {
+    const [member] = await db.select().from(staff).where(eq(staff.username, username));
+    return member;
   }
 
-  async createUser(user: InsertUser): Promise<User> {
-    const [newUser] = await db.insert(users).values(user).returning();
-    return newUser;
+  async getStaffByReplitUserId(replitUserId: string): Promise<Staff | undefined> {
+    const [member] = await db.select().from(staff).where(eq(staff.replitUserId, replitUserId));
+    return member;
+  }
+
+  async createStaffMember(member: InsertStaff): Promise<Staff> {
+    const [newMember] = await db.insert(staff).values(member).returning();
+    return newMember;
+  }
+
+  async findOrCreateStaffByReplitUser(replitUserId: string, name: string): Promise<Staff> {
+    const existing = await this.getStaffByReplitUserId(replitUserId);
+    if (existing) {
+      if (existing.name !== name) {
+        const [updated] = await db.update(staff).set({ name }).where(eq(staff.id, existing.id)).returning();
+        return updated;
+      }
+      return existing;
+    }
+
+    const username = `replit_${replitUserId.slice(0, 8)}`;
+    return this.createStaffMember({
+      replitUserId,
+      username,
+      name,
+      role: "technician",
+    });
   }
 
   // Patients
@@ -113,7 +139,6 @@ export class DatabaseStorage implements IStorage {
     )
     .orderBy(desc(samples.createdAt));
     
-    // Fetch results for each sample to populate the full response
     const result = await Promise.all(rows.map(async (row) => {
       const results = await this.getTestResultsBySample(row.sample.id);
       return {
@@ -146,9 +171,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createSample(sample: InsertSample): Promise<Sample> {
-    // Generate Accession Number: YYYYMMDD-XXXX
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    // Simple random suffix for demo purposes, robust systems use sequences
     const randomSuffix = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
     const accessionNumber = `${dateStr}-${randomSuffix}`;
     const barcode = `LAB-${accessionNumber}`;
@@ -191,11 +214,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateTestResult(id: number, resultValue: string, notes?: string): Promise<TestResult | undefined> {
-    // Basic logic for QC flagging (can be improved with reference ranges later)
     let qcFlag: string | null = null;
     const val = parseFloat(resultValue);
     if (!isNaN(val)) {
-      // Placeholder logic: actual systems use testType.referenceRange
       if (val > 100) qcFlag = "High";
       else if (val < 10) qcFlag = "Low";
       if (val > 500 || val < 2) qcFlag = "Critical";
@@ -228,19 +249,18 @@ export class DatabaseStorage implements IStorage {
     return newLog;
   }
 
-  async getAuditLogsByResult(testResultId: number): Promise<(AuditLog & { user: User })[]> {
+  async getAuditLogsByResult(testResultId: number): Promise<(AuditLog & { staffMember: Staff })[]> {
     const rows = await db.select({
       log: auditLogs,
-      user: users
+      staffMember: staff
     })
     .from(auditLogs)
-    .innerJoin(users, eq(auditLogs.userId, users.id))
+    .innerJoin(staff, eq(auditLogs.userId, staff.id))
     .where(eq(auditLogs.testResultId, testResultId))
     .orderBy(desc(auditLogs.timestamp));
 
-    return rows.map(r => ({ ...r.log, user: r.user }));
+    return rows.map(r => ({ ...r.log, staffMember: r.staffMember }));
   }
 }
-
 
 export const storage = new DatabaseStorage();

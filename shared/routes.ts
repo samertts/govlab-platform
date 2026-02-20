@@ -1,15 +1,15 @@
 import { z } from 'zod';
 import { 
-  insertUserSchema, 
   insertPatientSchema, 
   insertTestTypeSchema, 
   insertSampleSchema,
   insertTestResultSchema,
-  users,
   patients,
   testTypes,
   samples,
-  testResults
+  testResults,
+  type Staff,
+  type AuditLog
 } from './schema';
 
 // ============================================
@@ -35,34 +35,6 @@ export const errorSchemas = {
 // API CONTRACT
 // ============================================
 export const api = {
-  auth: {
-    login: {
-      method: 'POST' as const,
-      path: '/api/auth/login' as const,
-      input: z.object({
-        username: z.string(),
-        password: z.string(),
-      }),
-      responses: {
-        200: z.custom<typeof users.$inferSelect>(),
-        401: errorSchemas.unauthorized,
-      },
-    },
-    logout: {
-      method: 'POST' as const,
-      path: '/api/auth/logout' as const,
-      responses: {
-        200: z.void(),
-      },
-    },
-    me: {
-      method: 'GET' as const,
-      path: '/api/auth/me' as const,
-      responses: {
-        200: z.custom<typeof users.$inferSelect | null>(), // Returns null if not logged in
-      },
-    },
-  },
   patients: {
     list: {
       method: 'GET' as const,
@@ -170,7 +142,7 @@ export const api = {
       method: 'GET' as const,
       path: '/api/results/:id/audit-logs' as const,
       responses: {
-        200: z.array(z.custom<AuditLog & { user: User }>()),
+        200: z.array(z.custom<AuditLog & { staffMember: Staff }>()),
         404: errorSchemas.notFound,
       },
     },
@@ -209,7 +181,4 @@ export function buildUrl(path: string, params?: Record<string, string | number>)
   return url;
 }
 
-// Add types
-import { AuditLog, User } from './schema';
-export type AuditLogWithUser = AuditLog & { user: User };
-
+export type AuditLogWithStaff = AuditLog & { staffMember: Staff };

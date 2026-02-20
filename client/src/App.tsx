@@ -6,7 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/use-auth";
 import { Loader2 } from "lucide-react";
 
-import Login from "@/pages/Login";
+import Landing from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Patients from "@/pages/Patients";
 import Accessioning from "@/pages/Accessioning";
@@ -43,9 +43,21 @@ function PrivateRoute({ component: Component }: { component: React.ComponentType
 }
 
 function Router() {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
   return (
     <Switch>
-      <Route path="/login" component={Login} />
+      <Route path="/login">
+        {user ? <Redirect to="/" /> : <Landing />}
+      </Route>
       
       {/* Private Routes */}
       <Route path="/">

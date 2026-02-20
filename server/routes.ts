@@ -3,95 +3,32 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import session from "express-session";
-import passport from "passport";
-import { Strategy as LocalStrategy } from "passport-local";
-import { scrypt, randomBytes, timingSafeEqual } from "crypto";
-import { promisify } from "util";
-import { testTypes, patients, users, type User } from "@shared/schema";
-import createMemoryStore from "memorystore";
-
-const scryptAsync = promisify(scrypt);
-const MemoryStore = createMemoryStore(session);
+import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
+import { type Staff } from "@shared/schema";
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  // === AUTH SETUP ===
-  app.use(session({
-    secret: process.env.SESSION_SECRET || "secret",
-    resave: false,
-    saveUninitialized: false,
-    cookie: { maxAge: 86400000 },
-    store: new MemoryStore({
-      checkPeriod: 86400000 // prune expired entries every 24h
-    }),
-  }));
+  // === REPLIT AUTH SETUP ===
+  await setupAuth(app);
+  registerAuthRoutes(app);
 
-  app.use(passport.initialize());
-  app.use(passport.session());
-
-  passport.use(new LocalStrategy(async (username, password, done) => {
-    try {
-      const user = await storage.getUserByUsername(username);
-      if (!user) return done(null, false);
-
-      const [salt, key] = user.password.split(":");
-      const derivedKey = (await scryptAsync(password, salt, 64)) as Buffer;
-
-      if (timingSafeEqual(Buffer.from(key, "hex"), derivedKey)) {
-        return done(null, user);
-      }
-      return done(null, false);
-    } catch (err) {
-      return done(err);
-    }
-  }));
-
-  passport.serializeUser((user: any, done) => done(null, user.id));
-  passport.deserializeUser(async (id: number, done) => {
-    try {
-      const user = await storage.getUser(id);
-      done(null, user);
-    } catch (err) {
-      done(err);
-    }
-  });
-
-  // Helper to hash passwords
-  async function hashPassword(password: string) {
-    const salt = randomBytes(16).toString("hex");
-    const derivedKey = (await scryptAsync(password, salt, 64)) as Buffer;
-    return `${salt}:${derivedKey.toString("hex")}`;
-  }
-
-  // === ROUTES ===
-
-  // Auth Routes
-  app.post(api.auth.login.path, passport.authenticate("local"), (req, res) => {
-    res.json(req.user);
-  });
-
-  app.post(api.auth.logout.path, (req, res, next) => {
-    req.logout((err) => {
-      if (err) return next(err);
-      res.sendStatus(200);
-    });
-  });
-
-  app.get(api.auth.me.path, (req, res) => {
-    if (req.isAuthenticated()) {
-      res.json(req.user);
-    } else {
-      res.json(null);
-    }
-  });
-
-  // Middleware to check auth
+  // Middleware: use Replit Auth token refresh, then resolve to staff record
   const requireAuth = (req: any, res: any, next: any) => {
-    if (req.isAuthenticated()) return next();
-    res.status(401).json({ message: "Unauthorized" });
+    isAuthenticated(req, res, async (err?: any) => {
+      if (err) return next(err);
+
+      const claims = req.user?.claims;
+      if (!claims?.sub) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const name = [claims.first_name, claims.last_name].filter(Boolean).join(" ") || claims.email || "User";
+      const staffMember = await storage.findOrCreateStaffByReplitUser(claims.sub, name);
+      req.staffMember = staffMember;
+      next();
+    });
   };
 
   // Patients
@@ -169,11 +106,8 @@ export async function registerRoutes(
   app.post(api.samples.create.path, requireAuth, async (req, res) => {
     try {
       const input = api.samples.create.input.parse(req.body);
-      
-      // 1. Create Sample
       const sample = await storage.createSample(input);
       
-      // 2. Create Test Results (placeholders)
       for (const testTypeId of input.testTypeIds) {
         await storage.createTestResult({
           sampleId: sample.id,
@@ -203,22 +137,22 @@ export async function registerRoutes(
     res.json(logs);
   });
 
-  app.patch(api.results.update.path, requireAuth, async (req, res) => {
+  app.patch(api.results.update.path, requireAuth, async (req: any, res) => {
     try {
       const input = api.results.update.input.parse(req.body);
+      const staffMember: Staff = req.staffMember;
       const oldResult = await storage.getTestResult(Number(req.params.id));
       const result = await storage.updateTestResult(Number(req.params.id), input.resultValue, input.notes);
       
-      if (result && req.user) {
+      if (result && staffMember) {
         await storage.createAuditLog({
-          userId: (req.user as User).id,
+          userId: staffMember.id,
           testResultId: result.id,
           oldValue: oldResult?.resultValue || null,
           newValue: result.resultValue,
           action: "edit"
         });
 
-        // Auto-update sample status to 'processing' if it was 'collected'
         const sample = await storage.getSample(result.sampleId);
         if (sample && sample.status === "collected") {
           await storage.updateSampleStatus(result.sampleId, "processing");
@@ -235,16 +169,16 @@ export async function registerRoutes(
     }
   });
 
-  app.post(api.results.verify.path, requireAuth, async (req, res) => {
-    // In a real app, check if user is pathologist/admin
-    if (!req.user) return res.sendStatus(401);
+  app.post(api.results.verify.path, requireAuth, async (req: any, res) => {
+    const staffMember: Staff = req.staffMember;
+    if (!staffMember) return res.sendStatus(401);
     
     const oldResult = await storage.getTestResult(Number(req.params.id));
-    const result = await storage.verifyTestResult(Number(req.params.id), (req.user as User).id);
+    const result = await storage.verifyTestResult(Number(req.params.id), staffMember.id);
     
     if (result) {
       await storage.createAuditLog({
-        userId: (req.user as User).id,
+        userId: staffMember.id,
         testResultId: result.id,
         oldValue: oldResult?.status || null,
         newValue: result.status,
@@ -256,40 +190,36 @@ export async function registerRoutes(
     res.json(result);
   });
 
+  // Staff info endpoint
+  app.get("/api/staff/me", requireAuth, async (req: any, res) => {
+    res.json(req.staffMember);
+  });
+
   // Seed Data
   async function seed() {
-    const existingUsers = await storage.getUserByUsername("admin");
-    if (!existingUsers) {
-      const adminPassword = await hashPassword("admin123");
-      const techPassword = await hashPassword("tech123");
-      const docPassword = await hashPassword("doc123");
-
-      await storage.createUser({
+    const existingStaff = await storage.getStaffByUsername("admin");
+    if (!existingStaff) {
+      await storage.createStaffMember({
         username: "admin",
-        password: adminPassword,
         role: "admin",
         name: "Admin User"
       });
-      await storage.createUser({
+      await storage.createStaffMember({
         username: "tech",
-        password: techPassword,
         role: "technician",
         name: "Lab Tech"
       });
-      await storage.createUser({
+      await storage.createStaffMember({
         username: "doc",
-        password: docPassword,
         role: "pathologist",
         name: "Dr. Smith"
       });
 
-      // Seed Tests
       await storage.createTestType({ code: "CBC", name: "Complete Blood Count", price: 1500, units: "various", turnaroundTime: 24 });
       await storage.createTestType({ code: "BMP", name: "Basic Metabolic Panel", price: 1200, units: "various", turnaroundTime: 24 });
       await storage.createTestType({ code: "GLU", name: "Glucose", price: 500, units: "mg/dL", turnaroundTime: 2, referenceRange: "70-99" });
       await storage.createTestType({ code: "TSH", name: "Thyroid Stimulating Hormone", price: 2500, units: "mIU/L", turnaroundTime: 48, referenceRange: "0.4-4.0" });
 
-      // Seed Patient
       const patient = await storage.createPatient({
         mrn: "P10001",
         firstName: "John",
@@ -300,7 +230,6 @@ export async function registerRoutes(
         address: "123 Main St"
       });
 
-      // Seed Sample
       const sample = await storage.createSample({
         patientId: patient.id,
         status: "collected",
@@ -308,7 +237,6 @@ export async function registerRoutes(
         notes: "Routine checkup"
       });
       
-      // Seed Results
       const tests = await storage.getTestTypes();
       const cbc = tests.find(t => t.code === "CBC");
       if (cbc) {
