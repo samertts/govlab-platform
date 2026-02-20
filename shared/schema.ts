@@ -61,6 +61,7 @@ export const testResults = pgTable("test_results", {
   sampleId: integer("sample_id").notNull().references(() => samples.id),
   testTypeId: integer("test_type_id").notNull().references(() => testTypes.id),
   resultValue: text("result_value"),
+  qcFlag: text("qc_flag"), // High, Low, Critical
   status: text("status").notNull().default("pending"), // pending, entered, verified
   enteredBy: integer("entered_by").references(() => users.id),
   verifiedBy: integer("verified_by").references(() => users.id),

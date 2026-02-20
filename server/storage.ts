@@ -191,8 +191,24 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateTestResult(id: number, resultValue: string, notes?: string): Promise<TestResult | undefined> {
+    // Basic logic for QC flagging (can be improved with reference ranges later)
+    let qcFlag: string | null = null;
+    const val = parseFloat(resultValue);
+    if (!isNaN(val)) {
+      // Placeholder logic: actual systems use testType.referenceRange
+      if (val > 100) qcFlag = "High";
+      else if (val < 10) qcFlag = "Low";
+      if (val > 500 || val < 2) qcFlag = "Critical";
+    }
+
     const [updated] = await db.update(testResults)
-      .set({ resultValue, notes, status: "entered", performedAt: new Date() })
+      .set({ 
+        resultValue, 
+        notes, 
+        qcFlag,
+        status: "entered", 
+        performedAt: new Date() 
+      })
       .where(eq(testResults.id, id))
       .returning();
     return updated;
