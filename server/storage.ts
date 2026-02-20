@@ -99,22 +99,19 @@ export class DatabaseStorage implements IStorage {
 
   // Samples
   async getSamples(status?: string, patientId?: number): Promise<SampleWithPatient[]> {
-    let query = db.select({
+    const rows = await db.select({
       sample: samples,
       patient: patients
     })
     .from(samples)
-    .innerJoin(patients, eq(samples.patientId, patients.id));
-
-    if (status) {
-      query = query.where(eq(samples.status, status));
-    }
-    
-    if (patientId) {
-      query = query.where(eq(samples.patientId, patientId));
-    }
-
-    const rows = await query.orderBy(desc(samples.createdAt));
+    .innerJoin(patients, eq(samples.patientId, patients.id))
+    .where(
+      and(
+        status ? eq(samples.status, status) : undefined,
+        patientId ? eq(samples.patientId, patientId) : undefined
+      )
+    )
+    .orderBy(desc(samples.createdAt));
     
     // Fetch results for each sample to populate the full response
     const result = await Promise.all(rows.map(async (row) => {
