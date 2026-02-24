@@ -7,6 +7,7 @@ import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integra
 import { type Staff } from "@shared/schema";
 import { registerSovereignRoutes } from "./sovereignRoutes";
 import { attachTenantScope, getTenantLabFilter, enforceTenantOwnership, stampTenantLabId } from "./tenantScope";
+import { blockWriteForOversightRoles } from "./oversightGuard";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -52,7 +53,7 @@ export async function registerRoutes(
     res.json(patient);
   });
 
-  app.post(api.patients.create.path, requireAuth, async (req: any, res) => {
+  app.post(api.patients.create.path, requireAuth, blockWriteForOversightRoles, async (req: any, res) => {
     try {
       const input = stampTenantLabId(req.tenantScope, api.patients.create.input.parse(req.body));
       const patient = await storage.createPatient(input);
@@ -65,7 +66,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put(api.patients.update.path, requireAuth, async (req, res) => {
+  app.put(api.patients.update.path, requireAuth, blockWriteForOversightRoles, async (req, res) => {
     try {
       const input = api.patients.update.input.parse(req.body);
       const patient = await storage.updatePatient(Number(req.params.id), input);
@@ -85,7 +86,7 @@ export async function registerRoutes(
     res.json(tests);
   });
 
-  app.post(api.testTypes.create.path, requireAuth, async (req, res) => {
+  app.post(api.testTypes.create.path, requireAuth, blockWriteForOversightRoles, async (req, res) => {
     try {
       const input = api.testTypes.create.input.parse(req.body);
       const test = await storage.createTestType(input);
@@ -116,7 +117,7 @@ export async function registerRoutes(
     res.json(sample);
   });
 
-  app.post(api.samples.create.path, requireAuth, async (req: any, res) => {
+  app.post(api.samples.create.path, requireAuth, blockWriteForOversightRoles, async (req: any, res) => {
     try {
       const input = stampTenantLabId(req.tenantScope, api.samples.create.input.parse(req.body));
       const sample = await storage.createSample(input);
@@ -138,7 +139,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch(api.samples.updateStatus.path, requireAuth, async (req, res) => {
+  app.patch(api.samples.updateStatus.path, requireAuth, blockWriteForOversightRoles, async (req, res) => {
     const sample = await storage.updateSampleStatus(Number(req.params.id), req.body.status);
     if (!sample) return res.status(404).json({ message: "Sample not found" });
     res.json(sample);
@@ -150,7 +151,7 @@ export async function registerRoutes(
     res.json(logs);
   });
 
-  app.patch(api.results.update.path, requireAuth, async (req: any, res) => {
+  app.patch(api.results.update.path, requireAuth, blockWriteForOversightRoles, async (req: any, res) => {
     try {
       const input = api.results.update.input.parse(req.body);
       const staffMember: Staff = req.staffMember;
@@ -182,7 +183,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post(api.results.verify.path, requireAuth, async (req: any, res) => {
+  app.post(api.results.verify.path, requireAuth, blockWriteForOversightRoles, async (req: any, res) => {
     const staffMember: Staff = req.staffMember;
     if (!staffMember) return res.sendStatus(401);
     

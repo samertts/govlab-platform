@@ -491,6 +491,14 @@ export function registerSovereignRoutes(app: Express): void {
     res.json(reports);
   });
 
+  const requireNationalOversight = (req: any, res: any, next: any) => {
+    const role = req.staffMember?.role;
+    if (role !== "ministry_auditor" && role !== "admin" && role !== "national_clinical_supervisor") {
+      return res.status(403).json({ message: "National oversight access required" });
+    }
+    next();
+  };
+
   app.post("/api/sovereign/national-reports/generate", requireAuth, requireMinistryAuditor, async (req: any, res) => {
     const report = await storage.generateNationalSnapshot(req.staffMember.id);
     await eventBus.emitAndPersist({
@@ -501,5 +509,130 @@ export function registerSovereignRoutes(app: Express): void {
       emittedBy: req.staffMember.id,
     });
     res.status(201).json(report);
+  });
+
+  // === NATIONAL CLINICAL OVERSIGHT: PATIENT HISTORY WITH REASON_CODE ===
+
+  app.get("/api/sovereign/oversight/patient/:id/history", requireAuth, requireNationalOversight, async (req: any, res) => {
+    try {
+      const patientId = Number(req.params.id);
+      const reasonCode = req.query.reason_code as string;
+
+      if (!reasonCode) {
+        return res.status(400).json({ message: "reason_code query parameter is required for cross-lab patient history access" });
+      }
+
+      const patient = await storage.getPatient(patientId);
+      if (!patient) return res.status(404).json({ message: "Patient not found" });
+
+      await storage.logNationalAccess({
+        userId: req.staffMember.id,
+        roleCode: req.staffMember.role,
+        patientId,
+        labId: patient.labId,
+        reasonCode,
+        accessScope: "patient_history",
+        executionContext: req.tenantScope?.source === "federation_source"
+          ? "FEDERATION_GATEWAY"
+          : req.tenantScope?.source === "analyzer_token"
+            ? "OFFLINE_SYNC"
+            : "USER_SESSION",
+      });
+
+      const allSamples = await storage.getSamples(undefined, patientId, undefined);
+
+      res.json({
+        patient,
+        samples: allSamples,
+        accessMeta: {
+          reasonCode,
+          sessionScoped: true,
+          accessedAt: new Date().toISOString(),
+        },
+      });
+    } catch (err) {
+      throw err;
+    }
+  });
+
+  // === NATIONAL CLINICAL OVERSIGHT: POLICY ENGINE ===
+
+  app.get("/api/sovereign/oversight/policies", requireAuth, requireNationalOversight, async (req: any, res) => {
+    const sector = req.query.sector as string | undefined;
+    const activeOnly = req.query.active === "true";
+    const policies = await storage.getPolicies(sector, activeOnly);
+    res.json(policies);
+  });
+
+  app.post("/api/sovereign/oversight/policies", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const input = z.object({
+        testCode: z.string().optional().nullable(),
+        sector: z.enum(["GOVERNMENT", "PRIVATE"]),
+        restrictionType: z.string().min(1),
+        ruleDurationDays: z.number().optional().nullable(),
+        approvalRequired: z.boolean().optional(),
+        description: z.string().optional().nullable(),
+      }).parse(req.body);
+
+      const policy = await storage.createPolicy(input);
+      await eventBus.emitAndPersist({
+        eventType: "POLICY_CREATED",
+        entityType: "policy",
+        entityId: policy.id,
+        payload: { restrictionType: policy.restrictionType, sector: policy.sector },
+        emittedBy: req.staffMember.id,
+      });
+      res.status(201).json(policy);
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      throw err;
+    }
+  });
+
+  app.patch("/api/sovereign/oversight/policies/:id/active", requireAuth, requireAdmin, async (req: any, res) => {
+    const input = z.object({ activeFlag: z.boolean() }).parse(req.body);
+    const updated = await storage.updatePolicyActive(Number(req.params.id), input.activeFlag);
+    if (!updated) return res.status(404).json({ message: "Policy not found" });
+    res.json(updated);
+  });
+
+  app.post("/api/sovereign/oversight/policies/evaluate", requireAuth, requireNationalOversight, async (req: any, res) => {
+    try {
+      const input = z.object({
+        testCode: z.string(),
+        sector: z.enum(["GOVERNMENT", "PRIVATE"]),
+      }).parse(req.body);
+
+      const matchingPolicies = await storage.evaluatePolicies(input.testCode, input.sector);
+
+      const results = matchingPolicies.map(p => ({
+        policyId: p.id,
+        restrictionType: p.restrictionType,
+        ruleDurationDays: p.ruleDurationDays,
+        approvalRequired: p.approvalRequired,
+        mode: input.sector === "GOVERNMENT" ? "ENFORCED" : "ADVISORY",
+        blocking: p.restrictionType === "HIGH_RISK_BLOCK",
+      }));
+
+      res.json({
+        testCode: input.testCode,
+        sector: input.sector,
+        evaluatedAt: new Date().toISOString(),
+        policies: results,
+      });
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      throw err;
+    }
+  });
+
+  // === NATIONAL CLINICAL OVERSIGHT: ACCESS AUDIT LOG ===
+
+  app.get("/api/sovereign/oversight/access-audit", requireAuth, requireNationalOversight, async (req: any, res) => {
+    const userId = req.query.userId ? Number(req.query.userId) : undefined;
+    const patientId = req.query.patientId ? Number(req.query.patientId) : undefined;
+    const logs = await storage.getNationalAccessAuditLog(userId, patientId);
+    res.json(logs);
   });
 }

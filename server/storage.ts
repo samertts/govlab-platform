@@ -2,7 +2,7 @@ import { db } from "./db";
 import {
   staff, patients, testTypes, samples, testResults, auditLogs,
   organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems,
-  labs, nationalReports,
+  labs, nationalReports, policyEngine, nationalAccessAudit,
   type Staff, type InsertStaff,
   type Patient, type InsertPatient, type UpdatePatientRequest,
   type TestType, type InsertTestType,
@@ -14,6 +14,8 @@ import {
   type Facility, type InsertFacility,
   type Lab, type InsertLab,
   type NationalReport, type InsertNationalReport,
+  type Policy, type InsertPolicy,
+  type NationalAccessAuditEntry, type InsertNationalAccessAudit,
   type ApiToken, type InsertApiToken,
   type Event, type InsertEvent,
   type OfflineQueueItem, type InsertOfflineQueueItem,
@@ -108,6 +110,17 @@ export interface IStorage {
   createNationalReport(report: InsertNationalReport): Promise<NationalReport>;
   getNationalReports(reportType?: string, labId?: number): Promise<NationalReport[]>;
   generateNationalSnapshot(generatedBy: number): Promise<NationalReport>;
+
+  // Policy Engine (national clinical oversight)
+  createPolicy(policy: InsertPolicy): Promise<Policy>;
+  getPolicies(sector?: string, activeOnly?: boolean): Promise<Policy[]>;
+  getPolicy(id: number): Promise<Policy | undefined>;
+  updatePolicyActive(id: number, activeFlag: boolean): Promise<Policy | undefined>;
+  evaluatePolicies(testCode: string, sector: string): Promise<Policy[]>;
+
+  // National Access Audit (immutable)
+  logNationalAccess(entry: InsertNationalAccessAudit): Promise<NationalAccessAuditEntry>;
+  getNationalAccessAuditLog(userId?: number, patientId?: number): Promise<NationalAccessAuditEntry[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -645,6 +658,60 @@ export class DatabaseStorage implements IStorage {
       metrics,
       generatedBy,
     });
+  }
+
+  // === Policy Engine ===
+
+  async createPolicy(policy: InsertPolicy): Promise<Policy> {
+    const [newPolicy] = await db.insert(policyEngine).values(policy).returning();
+    return newPolicy;
+  }
+
+  async getPolicies(sector?: string, activeOnly?: boolean): Promise<Policy[]> {
+    const conditions = [];
+    if (sector) conditions.push(eq(policyEngine.sector, sector));
+    if (activeOnly) conditions.push(eq(policyEngine.activeFlag, true));
+    return await db.select().from(policyEngine)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(policyEngine.createdAt));
+  }
+
+  async getPolicy(id: number): Promise<Policy | undefined> {
+    const [policy] = await db.select().from(policyEngine).where(eq(policyEngine.id, id));
+    return policy;
+  }
+
+  async updatePolicyActive(id: number, activeFlag: boolean): Promise<Policy | undefined> {
+    const [updated] = await db.update(policyEngine)
+      .set({ activeFlag })
+      .where(eq(policyEngine.id, id))
+      .returning();
+    return updated;
+  }
+
+  async evaluatePolicies(testCode: string, sector: string): Promise<Policy[]> {
+    return await db.select().from(policyEngine)
+      .where(and(
+        eq(policyEngine.activeFlag, true),
+        eq(policyEngine.sector, sector),
+        sql`(${policyEngine.testCode} = ${testCode} OR ${policyEngine.testCode} IS NULL)`
+      ));
+  }
+
+  // === National Access Audit ===
+
+  async logNationalAccess(entry: InsertNationalAccessAudit): Promise<NationalAccessAuditEntry> {
+    const [record] = await db.insert(nationalAccessAudit).values(entry).returning();
+    return record;
+  }
+
+  async getNationalAccessAuditLog(userId?: number, patientId?: number): Promise<NationalAccessAuditEntry[]> {
+    const conditions = [];
+    if (userId) conditions.push(eq(nationalAccessAudit.userId, userId));
+    if (patientId) conditions.push(eq(nationalAccessAudit.patientId, patientId));
+    return await db.select().from(nationalAccessAudit)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(nationalAccessAudit.accessedAt));
   }
 }
 

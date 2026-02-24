@@ -25,7 +25,7 @@ export function attachTenantScope(req: any, _res: Response, next: NextFunction):
     return next();
   }
 
-  if (staffMember.role === "ministry_auditor") {
+  if (staffMember.role === "ministry_auditor" || staffMember.role === "national_clinical_supervisor") {
     req.tenantScope = { labId: null, bypass: true, source: "user_session", sourceId: staffMember.id };
   } else {
     req.tenantScope = { labId: staffMember.labId ?? null, bypass: false, source: "user_session", sourceId: staffMember.id };

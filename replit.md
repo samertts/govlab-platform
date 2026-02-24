@@ -43,7 +43,7 @@ Preferred communication style: Simple, everyday language.
 - **Database**: PostgreSQL via `node-postgres` (pg) pool
 - **ORM**: Drizzle ORM with PostgreSQL dialect
 - **Schema Management**: `drizzle-kit push` for applying schema changes (no migration files workflow by default)
-- **Tables**: users (Replit Auth), sessions (Replit Auth), staff, patients, testTypes, samples, testResults, auditLogs, organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems, labs, nationalReports
+- **Tables**: users (Replit Auth), sessions (Replit Auth), staff, patients, testTypes, samples, testResults, auditLogs, organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems, labs, nationalReports, policyEngine, nationalAccessAudit
 - **Key Relationships**: organizations → labs (multi-tenant); organizations → directorates → facilities; staff/patients/samples link to labs via labId; patients → samples → testResults → testTypes; auditLogs (hash-chained) reference testResults and staff; invoices → invoiceItems → testTypes
 - **Multi-tenant filtering**: Centralized via `server/tenantScope.ts` middleware. `attachTenantScope` runs after auth and attaches `req.tenantScope` with `{ labId, bypass }`. Helper functions `getTenantLabFilter`, `enforceTenantOwnership`, `stampTenantLabId` provide consistent scoping. Role `ministry_auditor` bypasses filtering and sees all data across labs.
 
@@ -58,7 +58,7 @@ Preferred communication style: Simple, everyday language.
 - Auth routes: `/api/login`, `/api/logout`, `/api/auth/user`
 - Internal staff records in `staff` table link to Replit users via `replitUserId`
 - `requireAuth` middleware: validates Replit Auth session → resolves to staff record (auto-creates if first login, default role: technician)
-- Staff roles: admin, pathologist, technician, receptionist
+- Staff roles: admin, pathologist, technician, receptionist, ministry_auditor, national_clinical_supervisor
 - Client uses `useAuth()` hook from `client/src/hooks/use-auth.ts` for auth state
 - Landing page at `/login` with "Sign In with Replit" button (no custom forms)
 
@@ -78,6 +78,7 @@ server/               # Backend Express application
   storage.ts          # Database storage interface and implementation
   sovereignRoutes.ts  # Sovereign Pilot API routes (org hierarchy, tokens, analyzers, events, offline, invoices)
   tenantScope.ts      # Centralized multi-tenant scope middleware (attachTenantScope, helpers)
+  oversightGuard.ts   # Write-guard middleware blocking national oversight roles from mutations
   eventBus.ts         # Unified event bus (EventEmitter + persistence)
   db.ts               # Database connection pool
   vite.ts             # Vite dev server middleware
@@ -97,6 +98,9 @@ All sovereign routes are under `/api/sovereign/` or `/api/analyzers/`:
 - **Pricing**: `POST /api/sovereign/invoices/generate`, `GET /api/sovereign/invoices/:id`, `GET /api/sovereign/invoices?patientId=`
 - **Labs**: `GET/POST /api/sovereign/labs`, `GET /api/sovereign/labs/:id`, `PATCH /api/sovereign/staff/:id/lab`
 - **National reports**: `GET /api/sovereign/national-reports`, `POST /api/sovereign/national-reports/generate` (ministry_auditor/admin only)
+- **Oversight — patient history**: `GET /api/sovereign/oversight/patient/:id/history?reason_code=` (national oversight roles, requires reason_code)
+- **Oversight — policies**: `GET/POST /api/sovereign/oversight/policies`, `PATCH /api/sovereign/oversight/policies/:id/active`, `POST /api/sovereign/oversight/policies/evaluate`
+- **Oversight — access audit**: `GET /api/sovereign/oversight/access-audit`
 - **Technician bench**: `GET /api/sovereign/bench/queue`
 
 ### Dev vs Production

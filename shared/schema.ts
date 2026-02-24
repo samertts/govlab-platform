@@ -233,6 +233,35 @@ export const nationalReports = pgTable("national_reports", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// === NATIONAL CLINICAL OVERSIGHT: POLICY ENGINE ===
+
+export const policyEngine = pgTable("policy_engine", {
+  id: serial("id").primaryKey(),
+  testCode: text("test_code"),
+  sector: text("sector").notNull().default("GOVERNMENT"),
+  restrictionType: text("restriction_type").notNull(),
+  ruleDurationDays: integer("rule_duration_days"),
+  approvalRequired: boolean("approval_required").default(false),
+  activeFlag: boolean("active_flag").default(true),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// === NATIONAL CLINICAL OVERSIGHT: ACCESS AUDIT ===
+
+export const nationalAccessAudit = pgTable("national_access_audit", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => staff.id),
+  roleCode: text("role_code").notNull(),
+  patientId: integer("patient_id").references(() => patients.id),
+  labId: integer("lab_id").references(() => labs.id),
+  reasonCode: text("reason_code").notNull(),
+  accessScope: text("access_scope").notNull(),
+  executionContext: text("execution_context").notNull(),
+  metadata: jsonb("metadata"),
+  accessedAt: timestamp("accessed_at").defaultNow().notNull(),
+});
+
 // === RELATIONS ===
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
@@ -366,9 +395,13 @@ export const insertOfflineQueueSchema = createInsertSchema(offlineQueue).omit({ 
 export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true, createdAt: true });
 export const insertInvoiceItemSchema = createInsertSchema(invoiceItems).omit({ id: true, createdAt: true });
 export const insertNationalReportSchema = createInsertSchema(nationalReports).omit({ id: true, createdAt: true });
+export const insertPolicySchema = createInsertSchema(policyEngine).omit({ id: true, createdAt: true });
+export const insertNationalAccessAuditSchema = createInsertSchema(nationalAccessAudit).omit({ id: true, accessedAt: true });
 
 // === EXPLICIT API CONTRACT TYPES ===
 
+export type Policy = typeof policyEngine.$inferSelect;
+export type NationalAccessAuditEntry = typeof nationalAccessAudit.$inferSelect;
 export type NationalReport = typeof nationalReports.$inferSelect;
 export type Lab = typeof labs.$inferSelect;
 export type Organization = typeof organizations.$inferSelect;
@@ -402,6 +435,8 @@ export type InsertOfflineQueueItem = z.infer<typeof insertOfflineQueueSchema>;
 export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
 export type InsertInvoiceItem = z.infer<typeof insertInvoiceItemSchema>;
 export type InsertNationalReport = z.infer<typeof insertNationalReportSchema>;
+export type InsertPolicy = z.infer<typeof insertPolicySchema>;
+export type InsertNationalAccessAudit = z.infer<typeof insertNationalAccessAuditSchema>;
 
 // Request types
 export type CreatePatientRequest = InsertPatient;
