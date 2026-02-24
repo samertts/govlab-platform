@@ -43,9 +43,9 @@ Preferred communication style: Simple, everyday language.
 - **Database**: PostgreSQL via `node-postgres` (pg) pool
 - **ORM**: Drizzle ORM with PostgreSQL dialect
 - **Schema Management**: `drizzle-kit push` for applying schema changes (no migration files workflow by default)
-- **Tables**: users (Replit Auth), sessions (Replit Auth), staff, patients, testTypes, samples, testResults, auditLogs, organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems, labs
+- **Tables**: users (Replit Auth), sessions (Replit Auth), staff, patients, testTypes, samples, testResults, auditLogs, organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems, labs, nationalReports
 - **Key Relationships**: organizations → labs (multi-tenant); organizations → directorates → facilities; staff/patients/samples link to labs via labId; patients → samples → testResults → testTypes; auditLogs (hash-chained) reference testResults and staff; invoices → invoiceItems → testTypes
-- **Multi-tenant filtering**: Users see only data from their assigned lab (staff.labId). Role `ministry_auditor` bypasses filtering and sees all data across labs.
+- **Multi-tenant filtering**: Centralized via `server/tenantScope.ts` middleware. `attachTenantScope` runs after auth and attaches `req.tenantScope` with `{ labId, bypass }`. Helper functions `getTenantLabFilter`, `enforceTenantOwnership`, `stampTenantLabId` provide consistent scoping. Role `ministry_auditor` bypasses filtering and sees all data across labs.
 
 ### Storage Layer
 - `server/storage.ts` defines an `IStorage` interface and `DatabaseStorage` implementation
@@ -77,6 +77,7 @@ server/               # Backend Express application
   routes.ts           # API route registration with auth
   storage.ts          # Database storage interface and implementation
   sovereignRoutes.ts  # Sovereign Pilot API routes (org hierarchy, tokens, analyzers, events, offline, invoices)
+  tenantScope.ts      # Centralized multi-tenant scope middleware (attachTenantScope, helpers)
   eventBus.ts         # Unified event bus (EventEmitter + persistence)
   db.ts               # Database connection pool
   vite.ts             # Vite dev server middleware
@@ -95,6 +96,7 @@ All sovereign routes are under `/api/sovereign/` or `/api/analyzers/`:
 - **Offline mode**: `POST /api/sovereign/offline/enqueue`, `GET /api/sovereign/offline/pending`, `POST /api/sovereign/offline/sync`
 - **Pricing**: `POST /api/sovereign/invoices/generate`, `GET /api/sovereign/invoices/:id`, `GET /api/sovereign/invoices?patientId=`
 - **Labs**: `GET/POST /api/sovereign/labs`, `GET /api/sovereign/labs/:id`, `PATCH /api/sovereign/staff/:id/lab`
+- **National reports**: `GET /api/sovereign/national-reports`, `POST /api/sovereign/national-reports/generate` (ministry_auditor/admin only)
 - **Technician bench**: `GET /api/sovereign/bench/queue`
 
 ### Dev vs Production

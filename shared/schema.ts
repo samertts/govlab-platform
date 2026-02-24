@@ -218,6 +218,20 @@ export const invoiceItems = pgTable("invoice_items", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// === NATIONAL CONTROL LAYER: AGGREGATED REPORTS ===
+
+export const nationalReports = pgTable("national_reports", {
+  id: serial("id").primaryKey(),
+  reportType: text("report_type").notNull(),
+  periodStart: timestamp("period_start").notNull(),
+  periodEnd: timestamp("period_end").notNull(),
+  labId: integer("lab_id").references(() => labs.id),
+  organizationId: integer("organization_id").references(() => organizations.id),
+  metrics: jsonb("metrics").notNull(),
+  generatedBy: integer("generated_by").references(() => staff.id),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // === RELATIONS ===
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
@@ -350,9 +364,11 @@ export const insertEventSchema = createInsertSchema(events).omit({ id: true, cre
 export const insertOfflineQueueSchema = createInsertSchema(offlineQueue).omit({ id: true, createdAt: true, processedAt: true });
 export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true, createdAt: true });
 export const insertInvoiceItemSchema = createInsertSchema(invoiceItems).omit({ id: true, createdAt: true });
+export const insertNationalReportSchema = createInsertSchema(nationalReports).omit({ id: true, createdAt: true });
 
 // === EXPLICIT API CONTRACT TYPES ===
 
+export type NationalReport = typeof nationalReports.$inferSelect;
 export type Lab = typeof labs.$inferSelect;
 export type Organization = typeof organizations.$inferSelect;
 export type Directorate = typeof directorates.$inferSelect;
@@ -384,6 +400,7 @@ export type InsertEvent = z.infer<typeof insertEventSchema>;
 export type InsertOfflineQueueItem = z.infer<typeof insertOfflineQueueSchema>;
 export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
 export type InsertInvoiceItem = z.infer<typeof insertInvoiceItemSchema>;
+export type InsertNationalReport = z.infer<typeof insertNationalReportSchema>;
 
 // Request types
 export type CreatePatientRequest = InsertPatient;

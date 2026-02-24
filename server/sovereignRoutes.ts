@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createHash, randomBytes } from "crypto";
 import { isAuthenticated } from "./replit_integrations/auth";
 import type { Staff } from "@shared/schema";
+import { attachTenantScope, getTenantLabFilter } from "./tenantScope";
 
 function hashToken(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
@@ -17,7 +18,7 @@ const requireAuth = (req: any, res: any, next: any) => {
     if (!claims?.sub) return res.status(401).json({ message: "Unauthorized" });
     const name = [claims.first_name, claims.last_name].filter(Boolean).join(" ") || claims.email || "User";
     req.staffMember = await storage.findOrCreateStaffByReplitUser(claims.sub, name);
-    next();
+    attachTenantScope(req, res, next);
   });
 };
 
@@ -431,8 +432,8 @@ export function registerSovereignRoutes(app: Express): void {
 
   app.get("/api/sovereign/bench/queue", requireAuth, async (req: any, res) => {
     const analyzerType = req.query.analyzerType as string | undefined;
-    const labId = req.staffMember?.role === "ministry_auditor" ? undefined : (req.staffMember?.labId ?? undefined);
-    const allSamples = await storage.getSamples(undefined, undefined, labId);
+    const labFilter = getTenantLabFilter(req.tenantScope);
+    const allSamples = await storage.getSamples(undefined, undefined, labFilter);
     const pending = allSamples.filter(s => {
       const hasPendingResults = s.results.some(r => r.status === "pending" || r.status === "entered");
       const matchesAnalyzer = !analyzerType || s.analyzerType === analyzerType;
@@ -466,5 +467,33 @@ export function registerSovereignRoutes(app: Express): void {
     }));
 
     res.json(queue);
+  });
+
+  // === NATIONAL CONTROL LAYER: REPORTS ===
+
+  const requireMinistryAuditor = (req: any, res: any, next: any) => {
+    if (req.staffMember?.role !== "ministry_auditor" && req.staffMember?.role !== "admin") {
+      return res.status(403).json({ message: "Ministry auditor or admin access required" });
+    }
+    next();
+  };
+
+  app.get("/api/sovereign/national-reports", requireAuth, requireMinistryAuditor, async (req: any, res) => {
+    const reportType = req.query.reportType as string | undefined;
+    const labId = req.query.labId ? Number(req.query.labId) : undefined;
+    const reports = await storage.getNationalReports(reportType, labId);
+    res.json(reports);
+  });
+
+  app.post("/api/sovereign/national-reports/generate", requireAuth, requireMinistryAuditor, async (req: any, res) => {
+    const report = await storage.generateNationalSnapshot(req.staffMember.id);
+    await eventBus.emitAndPersist({
+      eventType: "NATIONAL_REPORT_GENERATED",
+      entityType: "national_report",
+      entityId: report.id,
+      payload: { reportType: report.reportType },
+      emittedBy: req.staffMember.id,
+    });
+    res.status(201).json(report);
   });
 }

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import { type Staff } from "@shared/schema";
 import { registerSovereignRoutes } from "./sovereignRoutes";
+import { attachTenantScope, getTenantLabFilter, enforceTenantOwnership, stampTenantLabId } from "./tenantScope";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -18,7 +19,7 @@ export async function registerRoutes(
   // === SOVEREIGN PILOT ROUTES ===
   registerSovereignRoutes(app);
 
-  // Middleware: use Replit Auth token refresh, then resolve to staff record
+  // Middleware: use Replit Auth token refresh, then resolve to staff record + tenant scope
   const requireAuth = (req: any, res: any, next: any) => {
     isAuthenticated(req, res, async (err?: any) => {
       if (err) return next(err);
@@ -31,31 +32,21 @@ export async function registerRoutes(
       const name = [claims.first_name, claims.last_name].filter(Boolean).join(" ") || claims.email || "User";
       const staffMember = await storage.findOrCreateStaffByReplitUser(claims.sub, name);
       req.staffMember = staffMember;
-      next();
+      attachTenantScope(req, res, next);
     });
   };
 
-  // Helper: resolve labId for multi-tenant filtering
-  // MINISTRY_AUDITOR sees all data (labId = undefined → no filter)
-  // Other roles see only their lab's data
-  // Returns { labId, hasLab } — if hasLab is false, user has no lab assigned
-  function getTenantFilter(staffMember: Staff): { labId: number | undefined; bypass: boolean } {
-    if (staffMember.role === "ministry_auditor") return { labId: undefined, bypass: true };
-    return { labId: staffMember.labId ?? undefined, bypass: false };
-  }
-
   // Patients
   app.get(api.patients.list.path, requireAuth, async (req: any, res) => {
-    const { labId, bypass } = getTenantFilter(req.staffMember);
-    const patients = await storage.getPatients(req.query.search as string, bypass ? undefined : labId);
+    const labFilter = getTenantLabFilter(req.tenantScope);
+    const patients = await storage.getPatients(req.query.search as string, labFilter);
     res.json(patients);
   });
 
   app.get(api.patients.get.path, requireAuth, async (req: any, res) => {
     const patient = await storage.getPatient(Number(req.params.id));
     if (!patient) return res.status(404).json({ message: "Patient not found" });
-    const { labId, bypass } = getTenantFilter(req.staffMember);
-    if (!bypass && labId && patient.labId && patient.labId !== labId) {
+    if (!enforceTenantOwnership(req.tenantScope, patient.labId)) {
       return res.status(403).json({ message: "Access denied" });
     }
     res.json(patient);
@@ -63,11 +54,7 @@ export async function registerRoutes(
 
   app.post(api.patients.create.path, requireAuth, async (req: any, res) => {
     try {
-      const input = api.patients.create.input.parse(req.body);
-      const { labId, bypass } = getTenantFilter(req.staffMember);
-      if (!bypass && labId) {
-        input.labId = labId;
-      }
+      const input = stampTenantLabId(req.tenantScope, api.patients.create.input.parse(req.body));
       const patient = await storage.createPatient(input);
       res.status(201).json(patient);
     } catch (err) {
@@ -115,16 +102,15 @@ export async function registerRoutes(
   app.get(api.samples.list.path, requireAuth, async (req: any, res) => {
     const status = req.query.status as string;
     const patientId = req.query.patientId ? Number(req.query.patientId) : undefined;
-    const { labId, bypass } = getTenantFilter(req.staffMember);
-    const samples = await storage.getSamples(status, patientId, bypass ? undefined : labId);
+    const labFilter = getTenantLabFilter(req.tenantScope);
+    const samples = await storage.getSamples(status, patientId, labFilter);
     res.json(samples);
   });
 
   app.get(api.samples.get.path, requireAuth, async (req: any, res) => {
     const sample = await storage.getSample(Number(req.params.id));
     if (!sample) return res.status(404).json({ message: "Sample not found" });
-    const { labId, bypass } = getTenantFilter(req.staffMember);
-    if (!bypass && labId && sample.labId && sample.labId !== labId) {
+    if (!enforceTenantOwnership(req.tenantScope, sample.labId)) {
       return res.status(403).json({ message: "Access denied" });
     }
     res.json(sample);
@@ -132,11 +118,7 @@ export async function registerRoutes(
 
   app.post(api.samples.create.path, requireAuth, async (req: any, res) => {
     try {
-      const input = api.samples.create.input.parse(req.body);
-      const { labId, bypass } = getTenantFilter(req.staffMember);
-      if (!bypass && labId) {
-        input.labId = labId;
-      }
+      const input = stampTenantLabId(req.tenantScope, api.samples.create.input.parse(req.body));
       const sample = await storage.createSample(input);
       
       for (const testTypeId of input.testTypeIds) {

@@ -2,7 +2,7 @@ import { db } from "./db";
 import {
   staff, patients, testTypes, samples, testResults, auditLogs,
   organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems,
-  labs,
+  labs, nationalReports,
   type Staff, type InsertStaff,
   type Patient, type InsertPatient, type UpdatePatientRequest,
   type TestType, type InsertTestType,
@@ -13,6 +13,7 @@ import {
   type Directorate, type InsertDirectorate, type DirectorateWithFacilities,
   type Facility, type InsertFacility,
   type Lab, type InsertLab,
+  type NationalReport, type InsertNationalReport,
   type ApiToken, type InsertApiToken,
   type Event, type InsertEvent,
   type OfflineQueueItem, type InsertOfflineQueueItem,
@@ -102,6 +103,11 @@ export interface IStorage {
   addInvoiceItem(item: InsertInvoiceItem): Promise<InvoiceItem>;
   updateInvoiceTotals(invoiceId: number): Promise<Invoice | undefined>;
   generateInvoiceForSample(sampleId: number, patientId: number, facilityId?: number | null): Promise<Invoice>;
+
+  // National Reports (aggregated statistics)
+  createNationalReport(report: InsertNationalReport): Promise<NationalReport>;
+  getNationalReports(reportType?: string, labId?: number): Promise<NationalReport[]>;
+  generateNationalSnapshot(generatedBy: number): Promise<NationalReport>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -580,6 +586,65 @@ export class DatabaseStorage implements IStorage {
 
     const updated = await this.updateInvoiceTotals(invoice.id);
     return updated || invoice;
+  }
+
+  // === National Reports ===
+
+  async createNationalReport(report: InsertNationalReport): Promise<NationalReport> {
+    const [newReport] = await db.insert(nationalReports).values(report).returning();
+    return newReport;
+  }
+
+  async getNationalReports(reportType?: string, labId?: number): Promise<NationalReport[]> {
+    const conditions = [];
+    if (reportType) conditions.push(eq(nationalReports.reportType, reportType));
+    if (labId) conditions.push(eq(nationalReports.labId, labId));
+    return await db.select().from(nationalReports)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(nationalReports.createdAt));
+  }
+
+  async generateNationalSnapshot(generatedBy: number): Promise<NationalReport> {
+    const now = new Date();
+    const periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const periodEnd = now;
+
+    const [totalPatients] = await db.select({ count: sql<number>`count(*)::int` }).from(patients);
+    const [totalSamples] = await db.select({ count: sql<number>`count(*)::int` }).from(samples);
+    const [pendingSamples] = await db.select({ count: sql<number>`count(*)::int` }).from(samples).where(eq(samples.status, "collected"));
+    const [processingSamples] = await db.select({ count: sql<number>`count(*)::int` }).from(samples).where(eq(samples.status, "processing"));
+    const [completedSamples] = await db.select({ count: sql<number>`count(*)::int` }).from(samples).where(eq(samples.status, "completed"));
+    const [totalResults] = await db.select({ count: sql<number>`count(*)::int` }).from(testResults);
+    const [verifiedResults] = await db.select({ count: sql<number>`count(*)::int` }).from(testResults).where(eq(testResults.status, "verified"));
+    const [totalLabs] = await db.select({ count: sql<number>`count(*)::int` }).from(labs);
+    const [totalOrgs] = await db.select({ count: sql<number>`count(*)::int` }).from(organizations);
+
+    const labBreakdown = await db.select({
+      labId: samples.labId,
+      count: sql<number>`count(*)::int`,
+    }).from(samples)
+      .groupBy(samples.labId);
+
+    const metrics = {
+      totalPatients: totalPatients.count,
+      totalSamples: totalSamples.count,
+      pendingSamples: pendingSamples.count,
+      processingSamples: processingSamples.count,
+      completedSamples: completedSamples.count,
+      totalResults: totalResults.count,
+      verifiedResults: verifiedResults.count,
+      totalLabs: totalLabs.count,
+      totalOrganizations: totalOrgs.count,
+      labBreakdown,
+    };
+
+    return await this.createNationalReport({
+      reportType: "national_snapshot",
+      periodStart,
+      periodEnd,
+      metrics,
+      generatedBy,
+    });
   }
 }
 
