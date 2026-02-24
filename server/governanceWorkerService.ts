@@ -468,6 +468,12 @@ export function emitGovernanceJobPostCommit(event: Event): void {
   });
 }
 
+function isAnalyzerOriginEvent(event: Event): boolean {
+  const payload = event.payload as Record<string, any> | null;
+  if (!payload) return false;
+  return payload.originType === "ANALYZER" || payload.sourceType === "ANALYZER";
+}
+
 export function setupGovernanceEventSubscriptions(): void {
   const targetEvents = [
     EventTypes.RESULT_ENTERED,
@@ -477,6 +483,7 @@ export function setupGovernanceEventSubscriptions(): void {
 
   for (const eventType of targetEvents) {
     eventBus.on(eventType, (event: Event) => {
+      if (isAnalyzerOriginEvent(event)) return;
       emitGovernanceJobPostCommit(event);
     });
   }

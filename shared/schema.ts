@@ -478,6 +478,33 @@ export const insertGovernanceJobSchema = createInsertSchema(governanceJobs).omit
 export type InsertGovernanceJob = z.infer<typeof insertGovernanceJobSchema>;
 export type GovernanceJob = typeof governanceJobs.$inferSelect;
 
+// === INSTRUMENT STREAMING GATEWAY: ANALYZERS ===
+
+export const analyzers = pgTable("analyzers", {
+  id: serial("id").primaryKey(),
+  analyzerId: varchar("analyzer_id", { length: 100 }).notNull().unique(),
+  facilityCode: varchar("facility_code", { length: 100 }).notNull(),
+  analyzerType: varchar("analyzer_type", { length: 100 }).notNull(),
+  analyzerTokenHash: text("analyzer_token_hash").notNull().unique(),
+  isActive: boolean("is_active").default(true),
+  lastUsedAt: timestamp("last_used_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const analyzerEventQueue = pgTable("analyzer_event_queue", {
+  id: serial("id").primaryKey(),
+  eventType: varchar("event_type", { length: 100 }).notNull(),
+  analyzerId: varchar("analyzer_id", { length: 100 }).notNull(),
+  messageHash: varchar("message_hash", { length: 64 }).notNull(),
+  payload: jsonb("payload"),
+  processedStatus: varchar("processed_status", { length: 30 }).notNull().default("pending"),
+  retryCount: integer("retry_count").notNull().default(0),
+  errorDetail: text("error_detail"),
+  labId: integer("lab_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+  processedAt: timestamp("processed_at"),
+}, (table) => []);
+
 // === HOT VS COLD DATA ARCHITECTURE ===
 
 export const resultsHot = pgTable("results_hot", {
@@ -489,8 +516,16 @@ export const resultsHot = pgTable("results_hot", {
   testCode: varchar("test_code", { length: 100 }).notNull(),
   resultValue: text("result_value"),
   resultStatus: varchar("result_status", { length: 30 }).notNull().default("pending"),
-  createdAt: timestamp("created_at").defaultNow(),
+  sourceType: varchar("source_type", { length: 30 }).notNull().default("MANUAL"),
+  sourceId: varchar("source_id", { length: 200 }),
+  enteredBy: integer("entered_by"),
+  enteredAt: timestamp("entered_at").defaultNow(),
+  verifiedBy: integer("verified_by"),
   verifiedAt: timestamp("verified_at"),
+  ingestionMethod: varchar("ingestion_method", { length: 50 }),
+  amendmentChainRef: integer("amendment_chain_ref"),
+  provenanceJson: jsonb("provenance_json"),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const resultsArchive = pgTable("results_archive", {
@@ -682,6 +717,8 @@ export const insertNotificationEventSchema = createInsertSchema(notificationEven
 export const insertDeliveryLogSchema = createInsertSchema(deliveryLogs).omit({ id: true, createdAt: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
 export const insertSecurityEventSchema = createInsertSchema(securityEvents).omit({ id: true, createdAt: true });
+export const insertAnalyzerSchema = createInsertSchema(analyzers).omit({ id: true, createdAt: true, lastUsedAt: true });
+export const insertAnalyzerEventQueueSchema = createInsertSchema(analyzerEventQueue).omit({ id: true, createdAt: true, processedAt: true });
 export const insertResultsHotSchema = createInsertSchema(resultsHot).omit({ id: true, createdAt: true });
 export const insertResultsArchiveSchema = createInsertSchema(resultsArchive).omit({ id: true, archivedAt: true });
 export const insertPatientHistorySummarySchema = createInsertSchema(patientHistorySummary).omit({ id: true, updatedAt: true });
@@ -721,6 +758,8 @@ export type NotificationEvent = typeof notificationEvents.$inferSelect;
 export type DeliveryLog = typeof deliveryLogs.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type SecurityEvent = typeof securityEvents.$inferSelect;
+export type Analyzer = typeof analyzers.$inferSelect;
+export type AnalyzerEventQueueEntry = typeof analyzerEventQueue.$inferSelect;
 export type ResultHot = typeof resultsHot.$inferSelect;
 export type ResultArchive = typeof resultsArchive.$inferSelect;
 export type PatientHistorySummaryEntry = typeof patientHistorySummary.$inferSelect;
@@ -758,6 +797,8 @@ export type InsertNotificationEvent = z.infer<typeof insertNotificationEventSche
 export type InsertDeliveryLog = z.infer<typeof insertDeliveryLogSchema>;
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
 export type InsertSecurityEvent = z.infer<typeof insertSecurityEventSchema>;
+export type InsertAnalyzer = z.infer<typeof insertAnalyzerSchema>;
+export type InsertAnalyzerEventQueue = z.infer<typeof insertAnalyzerEventQueueSchema>;
 export type InsertResultHot = z.infer<typeof insertResultsHotSchema>;
 export type InsertResultArchive = z.infer<typeof insertResultsArchiveSchema>;
 export type InsertPatientHistorySummary = z.infer<typeof insertPatientHistorySummarySchema>;

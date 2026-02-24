@@ -2,14 +2,7 @@
 
 ## Overview
 
-GovLab LIS is a full-stack Laboratory Information System (LIS) for managing clinical laboratory workflows. It handles patient registration, sample accessioning, test result entry (worklist), result verification, and a dashboard for lab activity overview. The application is designed for government/clinical lab staff with role-based access (admin, pathologist, technician, receptionist).
-
-Key workflows:
-- **Patient Registry**: Register and search patients by name or MRN
-- **Accessioning**: Create samples/accessions linked to patients and test types
-- **Worklist**: Enter test results for pending samples
-- **Verification**: Pathologist review and approval of completed results
-- **Audit Logging**: Track changes to test results with user attribution
+GovLab LIS is a full-stack Laboratory Information System (LIS) designed to manage clinical laboratory workflows for government and clinical lab staff. It supports patient registration, sample accessioning, test result entry, result verification, and provides a dashboard for lab activity overview. The system incorporates role-based access for administrators, pathologists, technicians, and receptionists. Key features include patient registry, accessioning, worklist management, result verification by pathologists, and comprehensive audit logging for all changes. The project aims to provide a robust, multi-tenant LIS solution capable of supporting national oversight and advanced clinical governance.
 
 ## User Preferences
 
@@ -17,152 +10,59 @@ Preferred communication style: Simple, everyday language.
 
 ## System Architecture
 
+### Core Design Principles
+GovLab LIS is built with a clear separation of concerns between its frontend and backend. It leverages modern web technologies to deliver a responsive and efficient user experience, while the backend focuses on robust data management, security, and complex business logic. A shared codebase (`shared/`) ensures consistency in data schemas and API contracts between the client and server. The system supports multi-tenancy, with centralized middleware for tenant scope enforcement. Advanced features include a clinical governance engine, a clinical pathways engine, an event-driven notification system, and an instrument streaming gateway.
+
 ### Frontend
 - **Framework**: React 18 with TypeScript
-- **Routing**: Wouter (lightweight client-side router)
-- **State/Data Fetching**: TanStack React Query for server state management with query invalidation on mutations
-- **UI Components**: shadcn/ui (new-york style) built on Radix UI primitives
-- **Styling**: Tailwind CSS with CSS variables for theming, custom medical-professional color palette (cerulean blue primary, teal accent)
-- **Animations**: Framer Motion for page transitions
-- **Forms**: React Hook Form with Zod resolvers using shared schemas
-- **Build**: Vite with React plugin
+- **Routing**: Wouter
+- **State Management**: TanStack React Query for server state
+- **UI**: shadcn/ui (new-york style) built on Radix UI, styled with Tailwind CSS and a custom medical-professional color palette.
+- **Animations**: Framer Motion for transitions.
+- **Forms**: React Hook Form with Zod for validation.
+- **Build Tool**: Vite.
 
 ### Backend
-- **Runtime**: Node.js with Express 5
-- **Language**: TypeScript (executed via tsx)
-- **Authentication**: Passport.js with local strategy, session-based auth using express-session with MemoryStore
-- **Password Hashing**: Node.js crypto scrypt (not bcrypt)
-- **API Design**: RESTful JSON API under `/api/` prefix. API contract defined in `shared/routes.ts` with Zod schemas for input validation and response types
-- **Build**: esbuild bundles server to `dist/index.cjs` for production
-
-### Shared Code (`shared/`)
-- **Schema** (`shared/schema.ts`): Drizzle ORM table definitions and Zod insert schemas using `drizzle-zod`. This is the single source of truth for both database structure and validation.
-- **Routes** (`shared/routes.ts`): API contract object defining method, path, input schema, and response schemas for each endpoint. Used by both client and server.
+- **Runtime**: Node.js with Express 5, executed via `tsx`.
+- **Language**: TypeScript.
+- **Authentication**: Passport.js with Replit Auth (OpenID Connect) for session-based authentication.
+- **API**: RESTful JSON API using Zod schemas for validation and typing, defined in `shared/routes.ts`.
+- **Build Tool**: esbuild.
+- **Security**: Node.js crypto scrypt for password hashing, AES-256-GCM for national ID encryption.
+- **Multi-tenancy**: Centralized `tenantScope.ts` middleware for consistent data filtering.
+- **Event-Driven Architecture**: Uses an event bus, background workers for event processing, clinical governance, archiving, and analyzer event processing.
+- **Read Models**: Pre-computed views for worklists, national metrics, and suggestions.
+- **Clinical Intelligence**: Includes a Clinical Governance Engine and Clinical Pathways Engine for advisory evaluations.
 
 ### Data Storage
-- **Database**: PostgreSQL via `node-postgres` (pg) pool
-- **ORM**: Drizzle ORM with PostgreSQL dialect
-- **Schema Management**: `drizzle-kit push` for applying schema changes (no migration files workflow by default)
-- **Tables**: users (Replit Auth), sessions (Replit Auth), staff, patients, testTypes, samples, testResults, auditLogs, organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems, labs, nationalReports, policyEngine, nationalAccessAudit, identityVerifications, testPolicies, governanceEvents, clinicalPathways, pathwayRules, clinicalPathwayEvents, worklistView, nationalMetricsView, suggestionStreamView, unifiedSuggestionStream, notificationTemplates, notificationEvents, deliveryLogs, notifications, securityEvents, governanceJobs, resultsHot, resultsArchive, patientHistorySummary
-- **Key Relationships**: organizations → labs (multi-tenant); organizations → directorates → facilities; staff/patients/samples link to labs via labId; patients → samples → testResults → testTypes; auditLogs (hash-chained) reference testResults and staff; invoices → invoiceItems → testTypes
-- **Multi-tenant filtering**: Centralized via `server/tenantScope.ts` middleware. `attachTenantScope` runs after auth and attaches `req.tenantScope` with `{ labId, bypass }`. Helper functions `getTenantLabFilter`, `enforceTenantOwnership`, `stampTenantLabId` provide consistent scoping. Role `ministry_auditor` bypasses filtering and sees all data across labs.
-
-### Storage Layer
-- `server/storage.ts` defines an `IStorage` interface and `DatabaseStorage` implementation
-- All database access goes through this storage layer, making it testable and swappable
-
-### Authentication & Authorization
-- **Replit Auth** via OpenID Connect (OIDC) — replaces old local username/password auth
-- Sessions stored in PostgreSQL via `connect-pg-simple`
-- Auth module lives in `server/replit_integrations/auth/`
-- Auth routes: `/api/login`, `/api/logout`, `/api/auth/user`
-- Internal staff records in `staff` table link to Replit users via `replitUserId`
-- `requireAuth` middleware: validates Replit Auth session → resolves to staff record (auto-creates if first login, default role: technician)
-- Staff roles: admin, pathologist, technician, receptionist, ministry_auditor, national_clinical_supervisor
-- Client uses `useAuth()` hook from `client/src/hooks/use-auth.ts` for auth state
-- Landing page at `/login` with "Sign In with Replit" button (no custom forms)
+- **Database**: PostgreSQL.
+- **ORM**: Drizzle ORM with `node-postgres`.
+- **Schema Management**: `drizzle-kit push`.
+- **Key Tables**: `users`, `staff`, `patients`, `testTypes`, `samples`, `testResults`, `auditLogs`, `organizations`, `labs`, `clinicalPathways`, `governanceEvents`, `analyzers`, and various read model tables.
+- **Data Archiving**: Hot vs. cold data architecture for results.
 
 ### Project Structure
-```
-client/               # Frontend React application
-  src/
-    components/       # Reusable components
-      layout/         # Sidebar, PageHeader
-      ui/             # shadcn/ui components
-    hooks/            # Custom hooks (use-auth, use-lab, use-patients, use-toast, use-offline)
-    pages/            # Route pages (Dashboard, Patients, Accessioning, Worklist, Verification, TechnicianBench)
-    lib/              # Utilities (queryClient, utils)
-server/               # Backend Express application
-  index.ts            # Entry point, middleware setup
-  routes.ts           # API route registration with auth
-  storage.ts          # Database storage interface and implementation
-  sovereignRoutes.ts  # Sovereign Pilot API routes (org hierarchy, tokens, analyzers, events, offline, invoices, pathways)
-  clinicalPathwaysEngine.ts  # Clinical Pathways Engine (post-commit advisory evaluation)
-  governanceEngine.ts  # Clinical Governance Engine (advisory-first policy evaluation)
-  tenantScope.ts      # Centralized multi-tenant scope middleware (attachTenantScope, helpers)
-  oversightGuard.ts   # Write-guard middleware blocking national oversight roles from mutations
-  nationalIdEncryption.ts  # AES-256-GCM field-level encryption for national IDs
-  identityVerificationGateway.ts  # Mock verification gateway + async event listener
-  eventBus.ts         # Unified event bus (EventEmitter + persistence + payload sanitization)
-  eventWorkerService.ts  # Background event worker (polls unprocessed events, drives projections/orchestration/notifications)
-  governanceWorkerService.ts  # Asynchronous Clinical Governance worker (independent from event worker, policy checks + pathway evaluations)
-  archiveWorkerService.ts  # Hot vs Cold Data Architecture worker (moves aged results to archive, updates patient history summaries)
-  readModelProjections.ts  # Read model projection logic (worklist_view, national_metrics_view, suggestion_stream_view)
-  unifiedSuggestionOrchestrator.ts  # Unified Suggestion Orchestrator (priority: Doctor Authority → Governance → Pathways → Knowledge)
-  notificationEngine.ts  # Event-driven notification generation (template-based + direct in-app)
-  securityGuardrails.ts  # Passive runtime security (session anomaly detection, event origin validation, stale session cleanup)
-  db.ts               # Database connection pool
-  vite.ts             # Vite dev server middleware
-  static.ts           # Production static file serving
-shared/               # Shared between client and server
-  schema.ts           # Drizzle table definitions + Zod schemas
-  routes.ts           # API contract definitions
-```
+Organized into `client/`, `server/`, and `shared/` directories. The `server/` directory contains modules for authentication, storage, sovereign APIs, clinical engines, workers, read models, and security.
 
 ### Sovereign Pilot API Routes
-All sovereign routes are under `/api/sovereign/` or `/api/analyzers/`:
-- **Org hierarchy**: `GET/POST /api/sovereign/organizations`, `/api/sovereign/directorates`, `/api/sovereign/facilities`
-- **Identity tokens**: `POST /api/sovereign/tokens`, `DELETE /api/sovereign/tokens/:id`
-- **Analyzer gateway**: `POST /api/analyzers/ingest` (Bearer token auth)
-- **Event bus**: `GET /api/sovereign/events`, `GET /api/sovereign/events/stream` (SSE)
-- **Offline mode**: `POST /api/sovereign/offline/enqueue`, `GET /api/sovereign/offline/pending`, `POST /api/sovereign/offline/sync`
-- **Pricing**: `POST /api/sovereign/invoices/generate`, `GET /api/sovereign/invoices/:id`, `GET /api/sovereign/invoices?patientId=`
-- **Labs**: `GET/POST /api/sovereign/labs`, `GET /api/sovereign/labs/:id`, `PATCH /api/sovereign/staff/:id/lab`
-- **National reports**: `GET /api/sovereign/national-reports`, `POST /api/sovereign/national-reports/generate` (ministry_auditor/admin only)
-- **Oversight — patient history**: `GET /api/sovereign/oversight/patient/:id/history?reason_code=` (national oversight roles, requires reason_code)
-- **Oversight — policies**: `GET/POST /api/sovereign/oversight/policies`, `PATCH /api/sovereign/oversight/policies/:id/active`, `POST /api/sovereign/oversight/policies/evaluate`
-- **Oversight — access audit**: `GET /api/sovereign/oversight/access-audit`
-- **Clinical Governance — policies**: `GET/POST /api/sovereign/governance/policies`, `GET /api/sovereign/governance/policies/:id`, `PATCH /api/sovereign/governance/policies/:id/active`
-- **Clinical Governance — evaluate (user session)**: `POST /api/sovereign/governance/evaluate` (advisory-first evaluation)
-- **Clinical Governance — evaluate (analyzer)**: `POST /api/analyzers/governance/evaluate` (Bearer token auth, ANALYZER_SOURCE context)
-- **Clinical Governance — events**: `GET /api/sovereign/governance/events` (national oversight, read-only)
-- **Identity verification (user session)**: `POST /api/sovereign/identity/set-national-id/:patientId`, `POST /api/sovereign/identity/verify/:patientId`, `GET /api/sovereign/identity/status/:patientId`, `GET /api/sovereign/identity/history/:patientId`
-- **Identity verification (analyzer token)**: `POST /api/analyzers/identity/set-national-id/:patientId`, `POST /api/analyzers/identity/verify/:patientId` (Bearer token auth, ANALYZER_SOURCE context)
-- **Identity verification (federation)**: `POST /api/federation/identity/set-national-id/:patientId`, `POST /api/federation/identity/verify/:patientId` (federation auth, FEDERATION_GATEWAY context)
-- **Clinical Pathways — definitions**: `GET/POST /api/sovereign/pathways`, `GET /api/sovereign/pathways/:id`, `PATCH /api/sovereign/pathways/:id/active`
-- **Clinical Pathways — rules**: `GET/POST /api/sovereign/pathway-rules`, `GET /api/sovereign/pathway-rules/:id`, `PATCH /api/sovereign/pathway-rules/:id/active`
-- **Clinical Pathways — evaluate (user session)**: `POST /api/sovereign/pathways/evaluate` (post-commit advisory evaluation)
-- **Clinical Pathways — evaluate (analyzer)**: `POST /api/analyzers/pathways/evaluate` (Bearer token auth, ANALYZER_SOURCE context)
-- **Clinical Pathways — events**: `GET /api/sovereign/pathways/events` (national oversight, read-only)
-- **Technician bench**: `GET /api/sovereign/bench/queue`
-- **Event worker**: `GET /api/sovereign/worker/status` (admin only)
-- **Read models — worklist**: `GET /api/sovereign/read-models/worklist`
-- **Read models — metrics**: `GET /api/sovereign/read-models/metrics` (national oversight only)
-- **Read models — suggestions**: `GET /api/sovereign/read-models/suggestions`
-- **Unified suggestions**: `GET /api/sovereign/suggestions/unified`
-- **Notifications**: `GET /api/notifications`, `GET /api/notifications/count`, `PATCH /api/notifications/:id/read`, `POST /api/notifications/read-all`
-- **Notification templates**: `GET/POST /api/sovereign/notification-templates` (admin only)
-- **Security events**: `GET /api/sovereign/security-events` (national oversight only)
-- **Governance worker**: `GET /api/sovereign/governance/worker/status` (admin only)
-- **Governance jobs**: `GET /api/sovereign/governance/jobs`, `GET /api/sovereign/governance/jobs/stats` (admin only)
-- **Archive worker**: `GET /api/sovereign/archive/worker/status` (admin only)
-- **Archive stats**: `GET /api/sovereign/archive/stats` (admin only)
-- **Archive results**: `GET /api/sovereign/archive/results?patientId=` (tenant-scoped)
-- **Patient history**: `GET /api/sovereign/patient-history/:patientId`, `GET /api/sovereign/patient-history` (tenant-scoped)
-
-### Dev vs Production
-- **Development**: Vite dev server proxied through Express with HMR
-- **Production**: Client built to `dist/public/`, server bundled to `dist/index.cjs` via esbuild
+A comprehensive set of API endpoints are available under `/api/sovereign/` and `/api/analyzers/` for managing organizational hierarchy, identity tokens, analyzer ingestion, event streaming, offline mode, invoicing, national reports, patient history oversight, policy management, identity verification, clinical pathways, technician workbenches, and various worker statuses and read models.
 
 ## External Dependencies
 
 ### Database
-- **PostgreSQL**: Required. Connection via `DATABASE_URL` environment variable. Drizzle ORM handles queries. Run `npm run db:push` to sync schema to database.
+- **PostgreSQL**: Primary data store, managed via Drizzle ORM. Connection string required via `DATABASE_URL`.
 
 ### Key npm Packages
-- **drizzle-orm** + **drizzle-zod**: ORM and schema-to-Zod conversion
-- **express** v5: HTTP server framework
-- **passport** + **passport-local**: Authentication
-- **express-session** + **memorystore**: Session management
-- **@tanstack/react-query**: Client-side data fetching/caching
-- **wouter**: Client-side routing
-- **react-hook-form** + **@hookform/resolvers**: Form handling with Zod validation
-- **framer-motion**: Animations
-- **date-fns**: Date formatting
-- **recharts**: Dashboard analytics charts
-- **shadcn/ui** components (Radix UI primitives): Full component library
+- **drizzle-orm** + **drizzle-zod**: ORM and schema validation.
+- **express** v5: Backend web framework.
+- **passport** + **passport-local**: Authentication.
+- **@tanstack/react-query**: Frontend data fetching.
+- **wouter**: Frontend routing.
+- **react-hook-form** + **@hookform/resolvers**: Form management and validation.
+- **framer-motion**: UI animations.
+- **shadcn/ui** components: UI library.
 
 ### Environment Variables
-- `DATABASE_URL` (required): PostgreSQL connection string
-- `SESSION_SECRET` (optional, defaults to "secret"): Express session secret
-- `NATIONAL_ID_ENCRYPTION_KEY` (required for identity verification): 32-byte hex key for AES-256-GCM field-level encryption
+- `DATABASE_URL`: PostgreSQL connection string.
+- `SESSION_SECRET`: Express session secret.
+- `NATIONAL_ID_ENCRYPTION_KEY`: For AES-256-GCM encryption of national IDs.

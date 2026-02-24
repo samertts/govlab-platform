@@ -75,4 +75,7 @@ export const EventTypes = {
   DATA_ARCHIVED: "data.archived",
   DATA_ARCHIVE_FAILED: "data.archive.failed",
   PATIENT_HISTORY_UPDATED: "patient.history.updated",
+  ANALYZER_RESULT_RECEIVED: "analyzer.result.received",
+  ANALYZER_RESULT_PROCESSED: "analyzer.result.processed",
+  ANALYZER_RESULT_FAILED: "analyzer.result.failed",
 } as const;

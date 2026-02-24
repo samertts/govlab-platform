@@ -13,6 +13,8 @@ import { evaluatePathways, evaluatePathwaysPostCommit } from "./clinicalPathways
 import { startEventWorker, getWorkerStatus } from "./eventWorkerService";
 import { startGovernanceWorker, getGovernanceWorkerStatus, setupGovernanceEventSubscriptions } from "./governanceWorkerService";
 import { startArchiveWorker, getArchiveWorkerStatus, setupArchiveEventSubscription } from "./archiveWorkerService";
+import { authenticateAnalyzer, validateFacilityCode, ingestMessage, getGatewayStatus } from "./instrumentGateway";
+import { startAnalyzerWorker, getAnalyzerWorkerStatus } from "./analyzerWorkerService";
 import { sessionAnomalyDetector } from "./securityGuardrails";
 
 function hashToken(raw: string): string {
@@ -1482,6 +1484,130 @@ export function registerSovereignRoutes(app: Express): void {
     res.json(summaries);
   });
 
+  // === INSTRUMENT STREAMING GATEWAY ===
+
+  app.post("/api/gateway/analyzer-ingest", async (req: any, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return res.status(401).json({ message: "Bearer token required" });
+      }
+      const bearerToken = authHeader.slice(7);
+      const analyzer = await authenticateAnalyzer(bearerToken);
+      if (!analyzer) {
+        return res.status(401).json({ message: "Invalid or inactive analyzer token" });
+      }
+
+      const facilityValid = await validateFacilityCode(analyzer.facilityCode);
+      if (!facilityValid) {
+        return res.status(403).json({ message: "Unknown facility code" });
+      }
+
+      const messageFormat = (req.body.format || "JSON").toUpperCase() as "HL7" | "ASTM" | "JSON";
+      const rawPayload = req.body.message || req.body.payload || req.body;
+
+      if (!rawPayload) {
+        return res.status(400).json({ message: "Missing message payload" });
+      }
+
+      const result = await ingestMessage(analyzer, messageFormat, rawPayload);
+      if (!result.success) {
+        return res.status(400).json({ message: result.error });
+      }
+
+      res.status(202).json({
+        accepted: true,
+        eventId: result.eventId,
+        messageHash: result.messageHash,
+        duplicate: result.duplicate || false,
+        budgetExceeded: result.budgetExceeded || false,
+      });
+    } catch (err) {
+      res.status(500).json({ message: "Gateway ingestion failed" });
+    }
+  });
+
+  app.get("/api/gateway/status", requireAuth, requireAdmin, async (_req, res) => {
+    res.json(getGatewayStatus());
+  });
+
+  // === ANALYZER MANAGEMENT ===
+
+  app.post("/api/sovereign/analyzers", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const input = z.object({
+        analyzerId: z.string().min(1),
+        facilityCode: z.string().min(1),
+        analyzerType: z.string().min(1),
+      }).parse(req.body);
+
+      const facilityValid = await validateFacilityCode(input.facilityCode);
+      if (!facilityValid) {
+        return res.status(400).json({ message: "Unknown facility code — register the lab first" });
+      }
+
+      const rawToken = randomBytes(32).toString("hex");
+      const tokenHash = hashToken(rawToken);
+
+      const analyzer = await storage.createAnalyzer({
+        analyzerId: input.analyzerId,
+        facilityCode: input.facilityCode,
+        analyzerType: input.analyzerType,
+        analyzerTokenHash: tokenHash,
+      });
+
+      res.status(201).json({
+        ...analyzer,
+        analyzerToken: rawToken,
+        analyzerTokenHash: undefined,
+      });
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      throw err;
+    }
+  });
+
+  app.get("/api/sovereign/analyzers", requireAuth, requireAdmin, async (req: any, res) => {
+    const facilityCode = req.query.facilityCode as string | undefined;
+    const list = await storage.getAnalyzers(facilityCode);
+    const safe = list.map(a => ({ ...a, analyzerTokenHash: undefined }));
+    res.json(safe);
+  });
+
+  app.post("/api/sovereign/analyzers/:id/rotate-token", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid analyzer ID" });
+
+      const rawToken = randomBytes(32).toString("hex");
+      const tokenHash = hashToken(rawToken);
+      const updated = await storage.updateAnalyzerToken(id, tokenHash);
+      if (!updated) return res.status(404).json({ message: "Analyzer not found" });
+
+      res.json({ analyzerToken: rawToken, message: "Token rotated successfully" });
+    } catch (err) {
+      throw err;
+    }
+  });
+
+  app.delete("/api/sovereign/analyzers/:id", requireAuth, requireAdmin, async (req: any, res) => {
+    const id = Number(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid analyzer ID" });
+    await storage.deactivateAnalyzer(id);
+    res.json({ message: "Analyzer deactivated" });
+  });
+
+  // === ANALYZER WORKER STATUS ===
+
+  app.get("/api/sovereign/analyzer-worker/status", requireAuth, requireAdmin, async (_req, res) => {
+    res.json(getAnalyzerWorkerStatus());
+  });
+
+  app.get("/api/sovereign/analyzer-worker/queue-stats", requireAuth, requireAdmin, async (_req, res) => {
+    const stats = await storage.getAnalyzerEventQueueStats();
+    res.json(stats);
+  });
+
   // === START WORKERS & EVENT SUBSCRIPTIONS ===
 
   startEventWorker();
@@ -1489,4 +1615,5 @@ export function registerSovereignRoutes(app: Express): void {
   startGovernanceWorker();
   setupArchiveEventSubscription();
   startArchiveWorker();
+  startAnalyzerWorker();
 }

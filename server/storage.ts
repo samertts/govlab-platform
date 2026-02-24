@@ -47,6 +47,9 @@ import {
   type ResultHot, type InsertResultHot,
   type ResultArchive, type InsertResultArchive,
   type PatientHistorySummaryEntry, type InsertPatientHistorySummary,
+  analyzers, analyzerEventQueue,
+  type Analyzer, type InsertAnalyzer,
+  type AnalyzerEventQueueEntry, type InsertAnalyzerEventQueue,
 } from "@shared/schema";
 import { eq, desc, and, sql, isNull } from "drizzle-orm";
 import { createHash } from "crypto";
@@ -232,6 +235,24 @@ export interface IStorage {
   getPatientHistorySummary(patientId: number, labId?: number): Promise<PatientHistorySummaryEntry | undefined>;
   getPatientHistorySummaries(labId?: number): Promise<PatientHistorySummaryEntry[]>;
   getArchiveWorkerStats(): Promise<{ hotCount: number; archiveCount: number; summaryCount: number }>;
+
+  // Instrument Streaming Gateway: Analyzers
+  createAnalyzer(analyzer: InsertAnalyzer): Promise<Analyzer>;
+  getAnalyzerByTokenHash(tokenHash: string): Promise<Analyzer | undefined>;
+  getAnalyzerById(analyzerId: string): Promise<Analyzer | undefined>;
+  getAnalyzers(facilityCode?: string): Promise<Analyzer[]>;
+  updateAnalyzerLastUsed(id: number): Promise<void>;
+  updateAnalyzerToken(id: number, newTokenHash: string): Promise<Analyzer | undefined>;
+  deactivateAnalyzer(id: number): Promise<void>;
+
+  // Instrument Streaming Gateway: Event Queue
+  enqueueAnalyzerEvent(entry: InsertAnalyzerEventQueue): Promise<AnalyzerEventQueueEntry>;
+  getPendingAnalyzerEvents(limit?: number): Promise<AnalyzerEventQueueEntry[]>;
+  markAnalyzerEventProcessed(id: number): Promise<void>;
+  markAnalyzerEventFailed(id: number, errorDetail: string): Promise<void>;
+  incrementAnalyzerEventRetry(id: number): Promise<AnalyzerEventQueueEntry | undefined>;
+  findDuplicateAnalyzerEvent(analyzerId: string, messageHash: string): Promise<AnalyzerEventQueueEntry | undefined>;
+  getAnalyzerEventQueueStats(): Promise<{ pending: number; processing: number; completed: number; failed: number }>;
 
   // Governance Jobs (Asynchronous Clinical Governance)
   createGovernanceJob(job: InsertGovernanceJob): Promise<GovernanceJob>;
@@ -1405,6 +1426,96 @@ export class DatabaseStorage implements IStorage {
       archiveCount: archiveResult?.count || 0,
       summaryCount: summaryResult?.count || 0,
     };
+  }
+
+  async createAnalyzer(analyzer: InsertAnalyzer): Promise<Analyzer> {
+    const [created] = await db.insert(analyzers).values(analyzer).returning();
+    return created;
+  }
+
+  async getAnalyzerByTokenHash(tokenHash: string): Promise<Analyzer | undefined> {
+    const [found] = await db.select().from(analyzers).where(eq(analyzers.analyzerTokenHash, tokenHash)).limit(1);
+    return found;
+  }
+
+  async getAnalyzerById(analyzerId: string): Promise<Analyzer | undefined> {
+    const [found] = await db.select().from(analyzers).where(eq(analyzers.analyzerId, analyzerId)).limit(1);
+    return found;
+  }
+
+  async getAnalyzers(facilityCode?: string): Promise<Analyzer[]> {
+    if (facilityCode) {
+      return await db.select().from(analyzers).where(eq(analyzers.facilityCode, facilityCode)).orderBy(desc(analyzers.createdAt));
+    }
+    return await db.select().from(analyzers).orderBy(desc(analyzers.createdAt));
+  }
+
+  async updateAnalyzerLastUsed(id: number): Promise<void> {
+    await db.update(analyzers).set({ lastUsedAt: new Date() }).where(eq(analyzers.id, id));
+  }
+
+  async updateAnalyzerToken(id: number, newTokenHash: string): Promise<Analyzer | undefined> {
+    const [updated] = await db.update(analyzers).set({ analyzerTokenHash: newTokenHash }).where(eq(analyzers.id, id)).returning();
+    return updated;
+  }
+
+  async deactivateAnalyzer(id: number): Promise<void> {
+    await db.update(analyzers).set({ isActive: false }).where(eq(analyzers.id, id));
+  }
+
+  async enqueueAnalyzerEvent(entry: InsertAnalyzerEventQueue): Promise<AnalyzerEventQueueEntry> {
+    const [created] = await db.insert(analyzerEventQueue).values(entry).returning();
+    return created;
+  }
+
+  async getPendingAnalyzerEvents(limit: number = 50): Promise<AnalyzerEventQueueEntry[]> {
+    return await db.select().from(analyzerEventQueue)
+      .where(eq(analyzerEventQueue.processedStatus, "pending"))
+      .orderBy(analyzerEventQueue.createdAt)
+      .limit(limit);
+  }
+
+  async markAnalyzerEventProcessed(id: number): Promise<void> {
+    await db.update(analyzerEventQueue)
+      .set({ processedStatus: "completed", processedAt: new Date() })
+      .where(eq(analyzerEventQueue.id, id));
+  }
+
+  async markAnalyzerEventFailed(id: number, errorDetail: string): Promise<void> {
+    await db.update(analyzerEventQueue)
+      .set({ processedStatus: "failed", errorDetail, processedAt: new Date() })
+      .where(eq(analyzerEventQueue.id, id));
+  }
+
+  async incrementAnalyzerEventRetry(id: number): Promise<AnalyzerEventQueueEntry | undefined> {
+    const [updated] = await db.update(analyzerEventQueue)
+      .set({ retryCount: sql`${analyzerEventQueue.retryCount} + 1` })
+      .where(eq(analyzerEventQueue.id, id))
+      .returning();
+    return updated;
+  }
+
+  async findDuplicateAnalyzerEvent(analyzerId: string, messageHash: string): Promise<AnalyzerEventQueueEntry | undefined> {
+    const [existing] = await db.select().from(analyzerEventQueue)
+      .where(and(
+        eq(analyzerEventQueue.analyzerId, analyzerId),
+        eq(analyzerEventQueue.messageHash, messageHash)
+      ))
+      .limit(1);
+    return existing;
+  }
+
+  async getAnalyzerEventQueueStats(): Promise<{ pending: number; processing: number; completed: number; failed: number }> {
+    const result = await db.select({
+      status: analyzerEventQueue.processedStatus,
+      count: sql<number>`count(*)::int`,
+    }).from(analyzerEventQueue).groupBy(analyzerEventQueue.processedStatus);
+    const stats = { pending: 0, processing: 0, completed: 0, failed: 0 };
+    for (const row of result) {
+      const key = row.status.toLowerCase() as keyof typeof stats;
+      if (key in stats) stats[key] = row.count;
+    }
+    return stats;
   }
 }
 
