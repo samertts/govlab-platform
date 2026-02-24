@@ -12,6 +12,7 @@ import { evaluateGovernance, evaluateGovernanceAsync } from "./governanceEngine"
 import { evaluatePathways, evaluatePathwaysPostCommit } from "./clinicalPathwaysEngine";
 import { startEventWorker, getWorkerStatus } from "./eventWorkerService";
 import { startGovernanceWorker, getGovernanceWorkerStatus, setupGovernanceEventSubscriptions } from "./governanceWorkerService";
+import { startArchiveWorker, getArchiveWorkerStatus, setupArchiveEventSubscription } from "./archiveWorkerService";
 import { sessionAnomalyDetector } from "./securityGuardrails";
 
 function hashToken(raw: string): string {
@@ -1448,9 +1449,44 @@ export function registerSovereignRoutes(app: Express): void {
     res.json(pending);
   });
 
+  // === HOT VS COLD DATA ARCHITECTURE: ARCHIVE ROUTES ===
+
+  app.get("/api/sovereign/archive/worker/status", requireAuth, requireAdmin, async (req: any, res) => {
+    res.json(getArchiveWorkerStatus());
+  });
+
+  app.get("/api/sovereign/archive/stats", requireAuth, requireAdmin, async (req: any, res) => {
+    const stats = await storage.getArchiveWorkerStats();
+    res.json(stats);
+  });
+
+  app.get("/api/sovereign/archive/results", requireAuth, async (req: any, res) => {
+    const patientId = req.query.patientId ? Number(req.query.patientId) : undefined;
+    const labFilter = getTenantLabFilter(req);
+    const results = await storage.getResultsArchive(patientId, labFilter ?? undefined, 200);
+    res.json(results);
+  });
+
+  app.get("/api/sovereign/patient-history/:patientId", requireAuth, async (req: any, res) => {
+    const patientId = Number(req.params.patientId);
+    if (isNaN(patientId)) return res.status(400).json({ error: "Invalid patient ID" });
+    const labFilter = getTenantLabFilter(req);
+    const summary = await storage.getPatientHistorySummary(patientId, labFilter ?? undefined);
+    if (!summary) return res.status(404).json({ error: "No history summary found" });
+    res.json(summary);
+  });
+
+  app.get("/api/sovereign/patient-history", requireAuth, async (req: any, res) => {
+    const labFilter = getTenantLabFilter(req);
+    const summaries = await storage.getPatientHistorySummaries(labFilter ?? undefined);
+    res.json(summaries);
+  });
+
   // === START WORKERS & EVENT SUBSCRIPTIONS ===
 
   startEventWorker();
   setupGovernanceEventSubscriptions();
   startGovernanceWorker();
+  setupArchiveEventSubscription();
+  startArchiveWorker();
 }

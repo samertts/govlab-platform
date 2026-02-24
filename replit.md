@@ -43,7 +43,7 @@ Preferred communication style: Simple, everyday language.
 - **Database**: PostgreSQL via `node-postgres` (pg) pool
 - **ORM**: Drizzle ORM with PostgreSQL dialect
 - **Schema Management**: `drizzle-kit push` for applying schema changes (no migration files workflow by default)
-- **Tables**: users (Replit Auth), sessions (Replit Auth), staff, patients, testTypes, samples, testResults, auditLogs, organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems, labs, nationalReports, policyEngine, nationalAccessAudit, identityVerifications, testPolicies, governanceEvents, clinicalPathways, pathwayRules, clinicalPathwayEvents, worklistView, nationalMetricsView, suggestionStreamView, unifiedSuggestionStream, notificationTemplates, notificationEvents, deliveryLogs, notifications, securityEvents
+- **Tables**: users (Replit Auth), sessions (Replit Auth), staff, patients, testTypes, samples, testResults, auditLogs, organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems, labs, nationalReports, policyEngine, nationalAccessAudit, identityVerifications, testPolicies, governanceEvents, clinicalPathways, pathwayRules, clinicalPathwayEvents, worklistView, nationalMetricsView, suggestionStreamView, unifiedSuggestionStream, notificationTemplates, notificationEvents, deliveryLogs, notifications, securityEvents, governanceJobs, resultsHot, resultsArchive, patientHistorySummary
 - **Key Relationships**: organizations → labs (multi-tenant); organizations → directorates → facilities; staff/patients/samples link to labs via labId; patients → samples → testResults → testTypes; auditLogs (hash-chained) reference testResults and staff; invoices → invoiceItems → testTypes
 - **Multi-tenant filtering**: Centralized via `server/tenantScope.ts` middleware. `attachTenantScope` runs after auth and attaches `req.tenantScope` with `{ labId, bypass }`. Helper functions `getTenantLabFilter`, `enforceTenantOwnership`, `stampTenantLabId` provide consistent scoping. Role `ministry_auditor` bypasses filtering and sees all data across labs.
 
@@ -86,6 +86,7 @@ server/               # Backend Express application
   eventBus.ts         # Unified event bus (EventEmitter + persistence + payload sanitization)
   eventWorkerService.ts  # Background event worker (polls unprocessed events, drives projections/orchestration/notifications)
   governanceWorkerService.ts  # Asynchronous Clinical Governance worker (independent from event worker, policy checks + pathway evaluations)
+  archiveWorkerService.ts  # Hot vs Cold Data Architecture worker (moves aged results to archive, updates patient history summaries)
   readModelProjections.ts  # Read model projection logic (worklist_view, national_metrics_view, suggestion_stream_view)
   unifiedSuggestionOrchestrator.ts  # Unified Suggestion Orchestrator (priority: Doctor Authority → Governance → Pathways → Knowledge)
   notificationEngine.ts  # Event-driven notification generation (template-based + direct in-app)
@@ -134,6 +135,10 @@ All sovereign routes are under `/api/sovereign/` or `/api/analyzers/`:
 - **Security events**: `GET /api/sovereign/security-events` (national oversight only)
 - **Governance worker**: `GET /api/sovereign/governance/worker/status` (admin only)
 - **Governance jobs**: `GET /api/sovereign/governance/jobs`, `GET /api/sovereign/governance/jobs/stats` (admin only)
+- **Archive worker**: `GET /api/sovereign/archive/worker/status` (admin only)
+- **Archive stats**: `GET /api/sovereign/archive/stats` (admin only)
+- **Archive results**: `GET /api/sovereign/archive/results?patientId=` (tenant-scoped)
+- **Patient history**: `GET /api/sovereign/patient-history/:patientId`, `GET /api/sovereign/patient-history` (tenant-scoped)
 
 ### Dev vs Production
 - **Development**: Vite dev server proxied through Express with HMR

@@ -478,6 +478,46 @@ export const insertGovernanceJobSchema = createInsertSchema(governanceJobs).omit
 export type InsertGovernanceJob = z.infer<typeof insertGovernanceJobSchema>;
 export type GovernanceJob = typeof governanceJobs.$inferSelect;
 
+// === HOT VS COLD DATA ARCHITECTURE ===
+
+export const resultsHot = pgTable("results_hot", {
+  id: serial("id").primaryKey(),
+  resultId: integer("result_id").notNull(),
+  specimenId: integer("specimen_id").notNull(),
+  patientId: integer("patient_id").notNull(),
+  labId: integer("lab_id"),
+  testCode: varchar("test_code", { length: 100 }).notNull(),
+  resultValue: text("result_value"),
+  resultStatus: varchar("result_status", { length: 30 }).notNull().default("pending"),
+  createdAt: timestamp("created_at").defaultNow(),
+  verifiedAt: timestamp("verified_at"),
+});
+
+export const resultsArchive = pgTable("results_archive", {
+  id: serial("id").primaryKey(),
+  resultId: integer("result_id").notNull(),
+  specimenId: integer("specimen_id").notNull(),
+  patientId: integer("patient_id").notNull(),
+  labId: integer("lab_id"),
+  testCode: varchar("test_code", { length: 100 }).notNull(),
+  resultValue: text("result_value"),
+  resultStatus: varchar("result_status", { length: 30 }).notNull().default("pending"),
+  createdAt: timestamp("created_at"),
+  verifiedAt: timestamp("verified_at"),
+  archivedAt: timestamp("archived_at").defaultNow(),
+});
+
+export const patientHistorySummary = pgTable("patient_history_summary", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").notNull(),
+  labId: integer("lab_id"),
+  totalTests: integer("total_tests").notNull().default(0),
+  lastTestDate: timestamp("last_test_date"),
+  chronicFlags: jsonb("chronic_flags"),
+  riskMarkers: jsonb("risk_markers"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // === RUNTIME SECURITY: SESSION GUARDRAILS ===
 
 export const securityEvents = pgTable("security_events", {
@@ -642,6 +682,9 @@ export const insertNotificationEventSchema = createInsertSchema(notificationEven
 export const insertDeliveryLogSchema = createInsertSchema(deliveryLogs).omit({ id: true, createdAt: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
 export const insertSecurityEventSchema = createInsertSchema(securityEvents).omit({ id: true, createdAt: true });
+export const insertResultsHotSchema = createInsertSchema(resultsHot).omit({ id: true, createdAt: true });
+export const insertResultsArchiveSchema = createInsertSchema(resultsArchive).omit({ id: true, archivedAt: true });
+export const insertPatientHistorySummarySchema = createInsertSchema(patientHistorySummary).omit({ id: true, updatedAt: true });
 
 // === EXPLICIT API CONTRACT TYPES ===
 
@@ -678,6 +721,9 @@ export type NotificationEvent = typeof notificationEvents.$inferSelect;
 export type DeliveryLog = typeof deliveryLogs.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type SecurityEvent = typeof securityEvents.$inferSelect;
+export type ResultHot = typeof resultsHot.$inferSelect;
+export type ResultArchive = typeof resultsArchive.$inferSelect;
+export type PatientHistorySummaryEntry = typeof patientHistorySummary.$inferSelect;
 
 export type InsertLab = z.infer<typeof insertLabSchema>;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
@@ -712,6 +758,9 @@ export type InsertNotificationEvent = z.infer<typeof insertNotificationEventSche
 export type InsertDeliveryLog = z.infer<typeof insertDeliveryLogSchema>;
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
 export type InsertSecurityEvent = z.infer<typeof insertSecurityEventSchema>;
+export type InsertResultHot = z.infer<typeof insertResultsHotSchema>;
+export type InsertResultArchive = z.infer<typeof insertResultsArchiveSchema>;
+export type InsertPatientHistorySummary = z.infer<typeof insertPatientHistorySummarySchema>;
 
 // Request types
 export type CreatePatientRequest = InsertPatient;

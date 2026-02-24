@@ -43,6 +43,10 @@ import {
   type SecurityEvent, type InsertSecurityEvent,
   governanceJobs,
   type GovernanceJob, type InsertGovernanceJob,
+  resultsHot, resultsArchive, patientHistorySummary,
+  type ResultHot, type InsertResultHot,
+  type ResultArchive, type InsertResultArchive,
+  type PatientHistorySummaryEntry, type InsertPatientHistorySummary,
 } from "@shared/schema";
 import { eq, desc, and, sql, isNull } from "drizzle-orm";
 import { createHash } from "crypto";
@@ -217,6 +221,17 @@ export interface IStorage {
   // Security Events
   createSecurityEvent(event: InsertSecurityEvent): Promise<SecurityEvent>;
   getSecurityEvents(userId?: number, limit?: number): Promise<SecurityEvent[]>;
+
+  // Hot vs Cold Data Architecture
+  createResultHot(entry: InsertResultHot): Promise<ResultHot>;
+  getResultsHotOlderThan(days: number, limit?: number): Promise<ResultHot[]>;
+  deleteResultHot(id: number): Promise<void>;
+  createResultArchive(entry: InsertResultArchive): Promise<ResultArchive>;
+  getResultsArchive(patientId?: number, labId?: number, limit?: number): Promise<ResultArchive[]>;
+  upsertPatientHistorySummary(entry: InsertPatientHistorySummary): Promise<PatientHistorySummaryEntry>;
+  getPatientHistorySummary(patientId: number, labId?: number): Promise<PatientHistorySummaryEntry | undefined>;
+  getPatientHistorySummaries(labId?: number): Promise<PatientHistorySummaryEntry[]>;
+  getArchiveWorkerStats(): Promise<{ hotCount: number; archiveCount: number; summaryCount: number }>;
 
   // Governance Jobs (Asynchronous Clinical Governance)
   createGovernanceJob(job: InsertGovernanceJob): Promise<GovernanceJob>;
@@ -1316,6 +1331,80 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(governanceJobs.eventId, eventId), eq(governanceJobs.jobType, jobType)))
       .limit(1);
     return existing;
+  }
+
+  async createResultHot(entry: InsertResultHot): Promise<ResultHot> {
+    const [created] = await db.insert(resultsHot).values(entry).returning();
+    return created;
+  }
+
+  async getResultsHotOlderThan(days: number, limit: number = 100): Promise<ResultHot[]> {
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    return await db.select().from(resultsHot)
+      .where(sql`${resultsHot.createdAt} < ${cutoff}`)
+      .orderBy(resultsHot.createdAt)
+      .limit(limit);
+  }
+
+  async deleteResultHot(id: number): Promise<void> {
+    await db.delete(resultsHot).where(eq(resultsHot.id, id));
+  }
+
+  async createResultArchive(entry: InsertResultArchive): Promise<ResultArchive> {
+    const [created] = await db.insert(resultsArchive).values(entry).returning();
+    return created;
+  }
+
+  async getResultsArchive(patientId?: number, labId?: number, limit: number = 200): Promise<ResultArchive[]> {
+    const conditions = [];
+    if (patientId) conditions.push(eq(resultsArchive.patientId, patientId));
+    if (labId) conditions.push(eq(resultsArchive.labId, labId));
+    const query = conditions.length > 0
+      ? db.select().from(resultsArchive).where(and(...conditions))
+      : db.select().from(resultsArchive);
+    return await query.orderBy(desc(resultsArchive.createdAt)).limit(limit);
+  }
+
+  async upsertPatientHistorySummary(entry: InsertPatientHistorySummary): Promise<PatientHistorySummaryEntry> {
+    const conditions = [eq(patientHistorySummary.patientId, entry.patientId)];
+    if (entry.labId) conditions.push(eq(patientHistorySummary.labId, entry.labId));
+    const [existing] = await db.select().from(patientHistorySummary).where(and(...conditions)).limit(1);
+    if (existing) {
+      const [updated] = await db.update(patientHistorySummary)
+        .set({ ...entry, updatedAt: new Date() })
+        .where(eq(patientHistorySummary.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(patientHistorySummary).values(entry).returning();
+    return created;
+  }
+
+  async getPatientHistorySummary(patientId: number, labId?: number): Promise<PatientHistorySummaryEntry | undefined> {
+    const conditions = [eq(patientHistorySummary.patientId, patientId)];
+    if (labId) conditions.push(eq(patientHistorySummary.labId, labId));
+    const [result] = await db.select().from(patientHistorySummary).where(and(...conditions)).limit(1);
+    return result;
+  }
+
+  async getPatientHistorySummaries(labId?: number): Promise<PatientHistorySummaryEntry[]> {
+    if (labId) {
+      return await db.select().from(patientHistorySummary)
+        .where(eq(patientHistorySummary.labId, labId))
+        .orderBy(desc(patientHistorySummary.updatedAt));
+    }
+    return await db.select().from(patientHistorySummary).orderBy(desc(patientHistorySummary.updatedAt));
+  }
+
+  async getArchiveWorkerStats(): Promise<{ hotCount: number; archiveCount: number; summaryCount: number }> {
+    const [hotResult] = await db.select({ count: sql<number>`count(*)::int` }).from(resultsHot);
+    const [archiveResult] = await db.select({ count: sql<number>`count(*)::int` }).from(resultsArchive);
+    const [summaryResult] = await db.select({ count: sql<number>`count(*)::int` }).from(patientHistorySummary);
+    return {
+      hotCount: hotResult?.count || 0,
+      archiveCount: archiveResult?.count || 0,
+      summaryCount: summaryResult?.count || 0,
+    };
   }
 }
 

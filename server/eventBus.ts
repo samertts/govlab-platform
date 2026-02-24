@@ -72,4 +72,7 @@ export const EventTypes = {
   GOVERNANCE_JOB_CREATED: "governance.job.created",
   GOVERNANCE_JOB_COMPLETED: "governance.job.completed",
   GOVERNANCE_JOB_FAILED: "governance.job.failed",
+  DATA_ARCHIVED: "data.archived",
+  DATA_ARCHIVE_FAILED: "data.archive.failed",
+  PATIENT_HISTORY_UPDATED: "patient.history.updated",
 } as const;
