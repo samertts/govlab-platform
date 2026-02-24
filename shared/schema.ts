@@ -11,10 +11,22 @@ export const organizations = pgTable("organizations", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   code: text("code").notNull().unique(),
+  govCode: text("gov_code").unique(),
   type: text("type").notNull().default("government"),
   contactEmail: text("contact_email"),
   contactPhone: text("contact_phone"),
   address: text("address"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const labs = pgTable("labs", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id").notNull().references(() => organizations.id),
+  labName: text("lab_name").notNull(),
+  facilityCode: text("facility_code").notNull().unique(),
+  address: text("address"),
+  contactPhone: text("contact_phone"),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -65,6 +77,7 @@ export const staff = pgTable("staff", {
   role: text("role").notNull().default("technician"),
   name: text("name").notNull(),
   facilityId: integer("facility_id").references(() => facilities.id),
+  labId: integer("lab_id").references(() => labs.id),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -79,6 +92,7 @@ export const patients = pgTable("patients", {
   email: text("email"),
   address: text("address"),
   facilityId: integer("facility_id").references(() => facilities.id),
+  labId: integer("lab_id").references(() => labs.id),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -102,6 +116,7 @@ export const samples = pgTable("samples", {
   analyzerType: text("analyzer_type"),
   externalSampleId: text("external_sample_id"),
   facilityId: integer("facility_id").references(() => facilities.id),
+  labId: integer("lab_id").references(() => labs.id),
   collectionDate: timestamp("collection_date").defaultNow(),
   status: text("status").notNull().default("collected"),
   priority: text("priority").default("routine"),
@@ -207,6 +222,14 @@ export const invoiceItems = pgTable("invoice_items", {
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
   directorates: many(directorates),
+  labs: many(labs),
+}));
+
+export const labsRelations = relations(labs, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [labs.organizationId],
+    references: [organizations.id],
+  }),
 }));
 
 export const directoratesRelations = relations(directorates, ({ one, many }) => ({
@@ -244,6 +267,10 @@ export const samplesRelations = relations(samples, ({ one, many }) => ({
     fields: [samples.facilityId],
     references: [facilities.id],
   }),
+  lab: one(labs, {
+    fields: [samples.labId],
+    references: [labs.id],
+  }),
   results: many(testResults),
 }));
 
@@ -277,6 +304,10 @@ export const patientsRelations = relations(patients, ({ one, many }) => ({
     fields: [patients.facilityId],
     references: [facilities.id],
   }),
+  lab: one(labs, {
+    fields: [patients.labId],
+    references: [labs.id],
+  }),
   samples: many(samples),
 }));
 
@@ -304,6 +335,7 @@ export const invoiceItemsRelations = relations(invoiceItems, ({ one }) => ({
 }));
 
 // === BASE SCHEMAS ===
+export const insertLabSchema = createInsertSchema(labs).omit({ id: true, createdAt: true });
 export const insertOrganizationSchema = createInsertSchema(organizations).omit({ id: true, createdAt: true });
 export const insertDirectorateSchema = createInsertSchema(directorates).omit({ id: true, createdAt: true });
 export const insertFacilitySchema = createInsertSchema(facilities).omit({ id: true, createdAt: true });
@@ -321,6 +353,7 @@ export const insertInvoiceItemSchema = createInsertSchema(invoiceItems).omit({ i
 
 // === EXPLICIT API CONTRACT TYPES ===
 
+export type Lab = typeof labs.$inferSelect;
 export type Organization = typeof organizations.$inferSelect;
 export type Directorate = typeof directorates.$inferSelect;
 export type Facility = typeof facilities.$inferSelect;
@@ -336,6 +369,7 @@ export type OfflineQueueItem = typeof offlineQueue.$inferSelect;
 export type Invoice = typeof invoices.$inferSelect;
 export type InvoiceItem = typeof invoiceItems.$inferSelect;
 
+export type InsertLab = z.infer<typeof insertLabSchema>;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
 export type InsertDirectorate = z.infer<typeof insertDirectorateSchema>;
 export type InsertFacility = z.infer<typeof insertFacilitySchema>;
@@ -378,6 +412,10 @@ export type SampleWithPatient = Sample & {
 export type TestResultWithDetails = TestResult & {
   testType: TestType;
   sample: Sample & { patient: Patient };
+};
+
+export type LabWithOrganization = Lab & {
+  organization: Organization;
 };
 
 export type DirectorateWithFacilities = Directorate & {

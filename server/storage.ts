@@ -2,6 +2,7 @@ import { db } from "./db";
 import {
   staff, patients, testTypes, samples, testResults, auditLogs,
   organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems,
+  labs,
   type Staff, type InsertStaff,
   type Patient, type InsertPatient, type UpdatePatientRequest,
   type TestType, type InsertTestType,
@@ -11,6 +12,7 @@ import {
   type Organization, type InsertOrganization,
   type Directorate, type InsertDirectorate, type DirectorateWithFacilities,
   type Facility, type InsertFacility,
+  type Lab, type InsertLab,
   type ApiToken, type InsertApiToken,
   type Event, type InsertEvent,
   type OfflineQueueItem, type InsertOfflineQueueItem,
@@ -34,8 +36,8 @@ export interface IStorage {
   createStaffMember(member: InsertStaff): Promise<Staff>;
   findOrCreateStaffByReplitUser(replitUserId: string, name: string): Promise<Staff>;
 
-  // Patients
-  getPatients(search?: string): Promise<Patient[]>;
+  // Patients (labId = null means no filter; used for MINISTRY_AUDITOR)
+  getPatients(search?: string, labId?: number | null): Promise<Patient[]>;
   getPatient(id: number): Promise<Patient | undefined>;
   createPatient(patient: InsertPatient): Promise<Patient>;
   updatePatient(id: number, patient: UpdatePatientRequest): Promise<Patient | undefined>;
@@ -44,8 +46,8 @@ export interface IStorage {
   getTestTypes(): Promise<TestType[]>;
   createTestType(testType: InsertTestType): Promise<TestType>;
 
-  // Samples
-  getSamples(status?: string, patientId?: number): Promise<SampleWithPatient[]>;
+  // Samples (labId filtering for multi-tenancy)
+  getSamples(status?: string, patientId?: number, labId?: number | null): Promise<SampleWithPatient[]>;
   getSample(id: number): Promise<SampleWithPatient | undefined>;
   createSample(sample: InsertSample): Promise<Sample>;
   updateSampleStatus(id: number, status: string): Promise<Sample | undefined>;
@@ -60,6 +62,12 @@ export interface IStorage {
   // Audit Logs (immutable, hash-chained)
   createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
   getAuditLogsByResult(testResultId: number): Promise<(AuditLog & { staffMember: Staff })[]>;
+
+  // Labs (multi-tenant entities linked to organizations)
+  getLabs(organizationId?: number): Promise<Lab[]>;
+  getLab(id: number): Promise<Lab | undefined>;
+  createLab(lab: InsertLab): Promise<Lab>;
+  updateStaffLab(staffId: number, labId: number | null): Promise<Staff | undefined>;
 
   // Organizations hierarchy
   getOrganizations(): Promise<Organization[]>;
@@ -138,12 +146,19 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Patients
-  async getPatients(search?: string): Promise<Patient[]> {
+  async getPatients(search?: string, labId?: number | null): Promise<Patient[]> {
+    const conditions = [];
     if (search) {
       const lowerSearch = search.toLowerCase();
-      return await db.select().from(patients).where(
-        sql`lower(${patients.firstName}) like ${`%${lowerSearch}%`} OR lower(${patients.lastName}) like ${`%${lowerSearch}%`} OR ${patients.mrn} like ${`%${lowerSearch}%`}`
+      conditions.push(
+        sql`(lower(${patients.firstName}) like ${`%${lowerSearch}%`} OR lower(${patients.lastName}) like ${`%${lowerSearch}%`} OR ${patients.mrn} like ${`%${lowerSearch}%`})`
       );
+    }
+    if (labId !== undefined && labId !== null) {
+      conditions.push(eq(patients.labId, labId));
+    }
+    if (conditions.length > 0) {
+      return await db.select().from(patients).where(and(...conditions)).orderBy(desc(patients.createdAt));
     }
     return await db.select().from(patients).orderBy(desc(patients.createdAt));
   }
@@ -174,19 +189,19 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Samples
-  async getSamples(status?: string, patientId?: number): Promise<SampleWithPatient[]> {
+  async getSamples(status?: string, patientId?: number, labId?: number | null): Promise<SampleWithPatient[]> {
+    const conditions = [];
+    if (status) conditions.push(eq(samples.status, status));
+    if (patientId) conditions.push(eq(samples.patientId, patientId));
+    if (labId !== undefined && labId !== null) conditions.push(eq(samples.labId, labId));
+
     const rows = await db.select({
       sample: samples,
       patient: patients
     })
     .from(samples)
     .innerJoin(patients, eq(samples.patientId, patients.id))
-    .where(
-      and(
-        status ? eq(samples.status, status) : undefined,
-        patientId ? eq(samples.patientId, patientId) : undefined
-      )
-    )
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(desc(samples.createdAt));
     
     const result = await Promise.all(rows.map(async (row) => {
@@ -330,6 +345,30 @@ export class DatabaseStorage implements IStorage {
     .orderBy(desc(auditLogs.timestamp));
 
     return rows.map(r => ({ ...r.log, staffMember: r.staffMember }));
+  }
+
+  // === Labs ===
+
+  async getLabs(organizationId?: number): Promise<Lab[]> {
+    if (organizationId) {
+      return await db.select().from(labs).where(eq(labs.organizationId, organizationId)).orderBy(labs.labName);
+    }
+    return await db.select().from(labs).orderBy(labs.labName);
+  }
+
+  async getLab(id: number): Promise<Lab | undefined> {
+    const [lab] = await db.select().from(labs).where(eq(labs.id, id));
+    return lab;
+  }
+
+  async createLab(lab: InsertLab): Promise<Lab> {
+    const [newLab] = await db.insert(labs).values(lab).returning();
+    return newLab;
+  }
+
+  async updateStaffLab(staffId: number, labId: number | null): Promise<Staff | undefined> {
+    const [updated] = await db.update(staff).set({ labId }).where(eq(staff.id, staffId)).returning();
+    return updated;
   }
 
   // === SOVEREIGN PILOT: Organization Hierarchy ===

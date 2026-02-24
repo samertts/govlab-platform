@@ -377,11 +377,62 @@ export function registerSovereignRoutes(app: Express): void {
     res.json(invs);
   });
 
+  // === LABS (multi-tenant entities) ===
+
+  app.get("/api/sovereign/labs", requireAuth, async (req, res) => {
+    const orgId = req.query.organizationId ? Number(req.query.organizationId) : undefined;
+    const allLabs = await storage.getLabs(orgId);
+    res.json(allLabs);
+  });
+
+  app.get("/api/sovereign/labs/:id", requireAuth, async (req, res) => {
+    const lab = await storage.getLab(Number(req.params.id));
+    if (!lab) return res.status(404).json({ message: "Lab not found" });
+    res.json(lab);
+  });
+
+  app.post("/api/sovereign/labs", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const input = z.object({
+        organizationId: z.number(),
+        labName: z.string().min(1),
+        facilityCode: z.string().min(1),
+        address: z.string().optional().nullable(),
+        contactPhone: z.string().optional().nullable(),
+      }).parse(req.body);
+      const lab = await storage.createLab(input);
+      await eventBus.emitAndPersist({
+        eventType: EventTypes.FACILITY_CREATED,
+        entityType: "lab",
+        entityId: lab.id,
+        payload: { labName: lab.labName, facilityCode: lab.facilityCode },
+        emittedBy: req.staffMember.id,
+      });
+      res.status(201).json(lab);
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      throw err;
+    }
+  });
+
+  app.patch("/api/sovereign/staff/:id/lab", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const input = z.object({ labId: z.number().nullable() }).parse(req.body);
+      const updated = await storage.updateStaffLab(Number(req.params.id), input.labId);
+      if (!updated) return res.status(404).json({ message: "Staff not found" });
+      res.json(updated);
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      throw err;
+    }
+  });
+
   // === TECHNICIAN BENCH DATA ===
 
   app.get("/api/sovereign/bench/queue", requireAuth, async (req: any, res) => {
     const analyzerType = req.query.analyzerType as string | undefined;
-    const allSamples = await storage.getSamples();
+    const labId = req.staffMember?.role === "ministry_auditor" ? undefined : (req.staffMember?.labId ?? undefined);
+    const allSamples = await storage.getSamples(undefined, undefined, labId);
     const pending = allSamples.filter(s => {
       const hasPendingResults = s.results.some(r => r.status === "pending" || r.status === "entered");
       const matchesAnalyzer = !analyzerType || s.analyzerType === analyzerType;
