@@ -263,6 +263,34 @@ export const nationalAccessAudit = pgTable("national_access_audit", {
   accessedAt: timestamp("accessed_at").defaultNow().notNull(),
 });
 
+// === CLINICAL GOVERNANCE ENGINE: TEST POLICIES ===
+
+export const testPolicies = pgTable("test_policies", {
+  id: serial("id").primaryKey(),
+  testCode: text("test_code"),
+  sector: text("sector").notNull().default("GOVERNMENT"),
+  ruleType: text("rule_type").notNull(),
+  minIntervalDays: integer("min_interval_days"),
+  requiresApproval: boolean("requires_approval").default(false),
+  riskClass: text("risk_class").notNull().default("ADVISORY"),
+  activeFlag: boolean("active_flag").default(true),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// === CLINICAL GOVERNANCE ENGINE: GOVERNANCE EVENTS ===
+
+export const governanceEvents = pgTable("governance_events", {
+  id: serial("id").primaryKey(),
+  specimenId: integer("specimen_id").references(() => samples.id),
+  testCode: text("test_code").notNull(),
+  policyId: integer("policy_id").references(() => testPolicies.id),
+  evaluationResult: text("evaluation_result").notNull(),
+  executionContext: text("execution_context").notNull(),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // === SOVEREIGN IDENTITY: VERIFICATION RECORDS ===
 
 export const identityVerifications = pgTable("identity_verifications", {
@@ -412,12 +440,16 @@ export const insertNationalReportSchema = createInsertSchema(nationalReports).om
 export const insertPolicySchema = createInsertSchema(policyEngine).omit({ id: true, createdAt: true });
 export const insertNationalAccessAuditSchema = createInsertSchema(nationalAccessAudit).omit({ id: true, accessedAt: true });
 export const insertIdentityVerificationSchema = createInsertSchema(identityVerifications).omit({ id: true, createdAt: true });
+export const insertTestPolicySchema = createInsertSchema(testPolicies).omit({ id: true, createdAt: true });
+export const insertGovernanceEventSchema = createInsertSchema(governanceEvents).omit({ id: true, createdAt: true });
 
 // === EXPLICIT API CONTRACT TYPES ===
 
 export type Policy = typeof policyEngine.$inferSelect;
 export type NationalAccessAuditEntry = typeof nationalAccessAudit.$inferSelect;
 export type IdentityVerification = typeof identityVerifications.$inferSelect;
+export type TestPolicy = typeof testPolicies.$inferSelect;
+export type GovernanceEvent = typeof governanceEvents.$inferSelect;
 export type NationalReport = typeof nationalReports.$inferSelect;
 export type Lab = typeof labs.$inferSelect;
 export type Organization = typeof organizations.$inferSelect;
@@ -454,6 +486,8 @@ export type InsertNationalReport = z.infer<typeof insertNationalReportSchema>;
 export type InsertPolicy = z.infer<typeof insertPolicySchema>;
 export type InsertNationalAccessAudit = z.infer<typeof insertNationalAccessAuditSchema>;
 export type InsertIdentityVerification = z.infer<typeof insertIdentityVerificationSchema>;
+export type InsertTestPolicy = z.infer<typeof insertTestPolicySchema>;
+export type InsertGovernanceEvent = z.infer<typeof insertGovernanceEventSchema>;
 
 // Request types
 export type CreatePatientRequest = InsertPatient;

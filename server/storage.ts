@@ -3,6 +3,7 @@ import {
   staff, patients, testTypes, samples, testResults, auditLogs,
   organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems,
   labs, nationalReports, policyEngine, nationalAccessAudit, identityVerifications,
+  testPolicies, governanceEvents,
   type Staff, type InsertStaff,
   type Patient, type InsertPatient, type UpdatePatientRequest,
   type TestType, type InsertTestType,
@@ -17,6 +18,8 @@ import {
   type Policy, type InsertPolicy,
   type NationalAccessAuditEntry, type InsertNationalAccessAudit,
   type IdentityVerification, type InsertIdentityVerification,
+  type TestPolicy, type InsertTestPolicy,
+  type GovernanceEvent, type InsertGovernanceEvent,
   type ApiToken, type InsertApiToken,
   type Event, type InsertEvent,
   type OfflineQueueItem, type InsertOfflineQueueItem,
@@ -129,6 +132,18 @@ export interface IStorage {
   getIdentityVerificationsByPatient(patientId: number): Promise<IdentityVerification[]>;
   getIdentityVerification(id: number): Promise<IdentityVerification | undefined>;
   getLatestVerificationByPatient(patientId: number): Promise<IdentityVerification | undefined>;
+
+  // Clinical Governance Engine — Test Policies
+  createTestPolicy(policy: InsertTestPolicy): Promise<TestPolicy>;
+  getTestPolicies(sector?: string, activeOnly?: boolean): Promise<TestPolicy[]>;
+  getTestPolicy(id: number): Promise<TestPolicy | undefined>;
+  updateTestPolicyActive(id: number, activeFlag: boolean): Promise<TestPolicy | undefined>;
+  evaluateTestPolicies(testCode: string, sector: string): Promise<TestPolicy[]>;
+  getRecentTestResultsByCode(testCode: string, patientId: number, withinDays: number): Promise<TestResult[]>;
+
+  // Clinical Governance Engine — Governance Events
+  createGovernanceEvent(event: InsertGovernanceEvent): Promise<GovernanceEvent>;
+  getGovernanceEvents(specimenId?: number, testCode?: string, limit?: number): Promise<GovernanceEvent[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -756,6 +771,90 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(identityVerifications.createdAt))
       .limit(1);
     return record;
+  }
+
+  // === Clinical Governance Engine — Test Policies ===
+
+  async createTestPolicy(policy: InsertTestPolicy): Promise<TestPolicy> {
+    const [newPolicy] = await db.insert(testPolicies).values(policy).returning();
+    return newPolicy;
+  }
+
+  async getTestPolicies(sector?: string, activeOnly?: boolean): Promise<TestPolicy[]> {
+    const conditions = [];
+    if (sector) conditions.push(eq(testPolicies.sector, sector));
+    if (activeOnly) conditions.push(eq(testPolicies.activeFlag, true));
+    return await db.select().from(testPolicies)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(testPolicies.createdAt));
+  }
+
+  async getTestPolicy(id: number): Promise<TestPolicy | undefined> {
+    const [policy] = await db.select().from(testPolicies).where(eq(testPolicies.id, id));
+    return policy;
+  }
+
+  async updateTestPolicyActive(id: number, activeFlag: boolean): Promise<TestPolicy | undefined> {
+    const [updated] = await db.update(testPolicies)
+      .set({ activeFlag })
+      .where(eq(testPolicies.id, id))
+      .returning();
+    return updated;
+  }
+
+  async evaluateTestPolicies(testCode: string, sector: string): Promise<TestPolicy[]> {
+    return await db.select().from(testPolicies)
+      .where(and(
+        eq(testPolicies.activeFlag, true),
+        eq(testPolicies.sector, sector),
+        sql`(${testPolicies.testCode} = ${testCode} OR ${testPolicies.testCode} IS NULL)`
+      ));
+  }
+
+  async getRecentTestResultsByCode(testCode: string, patientId: number, withinDays: number): Promise<TestResult[]> {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - withinDays);
+
+    return await db.select({
+      id: testResults.id,
+      sampleId: testResults.sampleId,
+      testTypeId: testResults.testTypeId,
+      resultValue: testResults.resultValue,
+      qcFlag: testResults.qcFlag,
+      status: testResults.status,
+      enteredBy: testResults.enteredBy,
+      verifiedBy: testResults.verifiedBy,
+      analyzerId: testResults.analyzerId,
+      facilityId: testResults.facilityId,
+      notes: testResults.notes,
+      performedAt: testResults.performedAt,
+      verifiedAt: testResults.verifiedAt,
+    }).from(testResults)
+      .innerJoin(testTypes, eq(testResults.testTypeId, testTypes.id))
+      .innerJoin(samples, eq(testResults.sampleId, samples.id))
+      .where(and(
+        eq(testTypes.code, testCode),
+        eq(samples.patientId, patientId),
+        sql`${testResults.performedAt} >= ${cutoff}`
+      ));
+  }
+
+  // === Clinical Governance Engine — Governance Events ===
+
+  async createGovernanceEvent(event: InsertGovernanceEvent): Promise<GovernanceEvent> {
+    const [record] = await db.insert(governanceEvents).values(event).returning();
+    return record;
+  }
+
+  async getGovernanceEvents(specimenId?: number, testCode?: string, limit?: number): Promise<GovernanceEvent[]> {
+    const conditions = [];
+    if (specimenId) conditions.push(eq(governanceEvents.specimenId, specimenId));
+    if (testCode) conditions.push(eq(governanceEvents.testCode, testCode));
+    const query = db.select().from(governanceEvents)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(governanceEvents.createdAt));
+    if (limit) return await query.limit(limit);
+    return await query;
   }
 }
 

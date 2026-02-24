@@ -43,7 +43,7 @@ Preferred communication style: Simple, everyday language.
 - **Database**: PostgreSQL via `node-postgres` (pg) pool
 - **ORM**: Drizzle ORM with PostgreSQL dialect
 - **Schema Management**: `drizzle-kit push` for applying schema changes (no migration files workflow by default)
-- **Tables**: users (Replit Auth), sessions (Replit Auth), staff, patients, testTypes, samples, testResults, auditLogs, organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems, labs, nationalReports, policyEngine, nationalAccessAudit, identityVerifications
+- **Tables**: users (Replit Auth), sessions (Replit Auth), staff, patients, testTypes, samples, testResults, auditLogs, organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems, labs, nationalReports, policyEngine, nationalAccessAudit, identityVerifications, testPolicies, governanceEvents
 - **Key Relationships**: organizations → labs (multi-tenant); organizations → directorates → facilities; staff/patients/samples link to labs via labId; patients → samples → testResults → testTypes; auditLogs (hash-chained) reference testResults and staff; invoices → invoiceItems → testTypes
 - **Multi-tenant filtering**: Centralized via `server/tenantScope.ts` middleware. `attachTenantScope` runs after auth and attaches `req.tenantScope` with `{ labId, bypass }`. Helper functions `getTenantLabFilter`, `enforceTenantOwnership`, `stampTenantLabId` provide consistent scoping. Role `ministry_auditor` bypasses filtering and sees all data across labs.
 
@@ -103,6 +103,10 @@ All sovereign routes are under `/api/sovereign/` or `/api/analyzers/`:
 - **Oversight — patient history**: `GET /api/sovereign/oversight/patient/:id/history?reason_code=` (national oversight roles, requires reason_code)
 - **Oversight — policies**: `GET/POST /api/sovereign/oversight/policies`, `PATCH /api/sovereign/oversight/policies/:id/active`, `POST /api/sovereign/oversight/policies/evaluate`
 - **Oversight — access audit**: `GET /api/sovereign/oversight/access-audit`
+- **Clinical Governance — policies**: `GET/POST /api/sovereign/governance/policies`, `GET /api/sovereign/governance/policies/:id`, `PATCH /api/sovereign/governance/policies/:id/active`
+- **Clinical Governance — evaluate (user session)**: `POST /api/sovereign/governance/evaluate` (advisory-first evaluation)
+- **Clinical Governance — evaluate (analyzer)**: `POST /api/analyzers/governance/evaluate` (Bearer token auth, ANALYZER_SOURCE context)
+- **Clinical Governance — events**: `GET /api/sovereign/governance/events` (national oversight, read-only)
 - **Identity verification (user session)**: `POST /api/sovereign/identity/set-national-id/:patientId`, `POST /api/sovereign/identity/verify/:patientId`, `GET /api/sovereign/identity/status/:patientId`, `GET /api/sovereign/identity/history/:patientId`
 - **Identity verification (analyzer token)**: `POST /api/analyzers/identity/set-national-id/:patientId`, `POST /api/analyzers/identity/verify/:patientId` (Bearer token auth, ANALYZER_SOURCE context)
 - **Identity verification (federation)**: `POST /api/federation/identity/set-national-id/:patientId`, `POST /api/federation/identity/verify/:patientId` (federation auth, FEDERATION_GATEWAY context)

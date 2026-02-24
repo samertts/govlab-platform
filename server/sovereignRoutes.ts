@@ -8,6 +8,7 @@ import type { Staff } from "@shared/schema";
 import { attachTenantScope, attachTokenTenantScope, getTenantLabFilter, enforceTenantOwnership, resolveExecutionContext } from "./tenantScope";
 import { encryptNationalId, decryptNationalId, hashNationalId } from "./nationalIdEncryption";
 import { processIdentityVerification, setupIdentityVerificationListener } from "./identityVerificationGateway";
+import { evaluateGovernance, evaluateGovernanceAsync } from "./governanceEngine";
 
 function hashToken(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
@@ -247,6 +248,35 @@ export function registerSovereignRoutes(app: Express): void {
         processedCount: processedResults.length,
         results: processedResults,
       });
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      throw err;
+    }
+  });
+
+  // === ANALYZER-CONTEXT GOVERNANCE EVALUATION ===
+
+  app.post("/api/analyzers/governance/evaluate", requireTokenAuth, async (req: any, res) => {
+    try {
+      const input = z.object({
+        testCode: z.string().min(1),
+        sector: z.enum(["GOVERNMENT", "PRIVATE"]),
+        patientId: z.number().int().positive(),
+        specimenId: z.number().int().positive().optional().nullable(),
+      }).parse(req.body);
+
+      const executionContext = resolveExecutionContext(req.tenantScope);
+
+      const result = await evaluateGovernance(
+        input.testCode,
+        input.sector,
+        input.patientId,
+        input.specimenId ?? null,
+        executionContext,
+        null,
+      );
+
+      res.json(result);
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
       throw err;
@@ -632,6 +662,105 @@ export function registerSovereignRoutes(app: Express): void {
     const patientId = req.query.patientId ? Number(req.query.patientId) : undefined;
     const logs = await storage.getNationalAccessAuditLog(userId, patientId);
     res.json(logs);
+  });
+
+  // === CLINICAL GOVERNANCE ENGINE: TEST POLICIES ===
+
+  app.get("/api/sovereign/governance/policies", requireAuth, requireNationalOversight, async (req: any, res) => {
+    const sector = req.query.sector as string | undefined;
+    const activeOnly = req.query.active === "true";
+    const policies = await storage.getTestPolicies(sector, activeOnly);
+    res.json(policies);
+  });
+
+  app.post("/api/sovereign/governance/policies", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const input = z.object({
+        testCode: z.string().optional().nullable(),
+        sector: z.enum(["GOVERNMENT", "PRIVATE"]),
+        ruleType: z.enum(["DUPLICATE_TEST_INTERVAL", "APPROVAL_REQUIRED", "VISIBILITY_CONTROL"]),
+        minIntervalDays: z.number().optional().nullable(),
+        requiresApproval: z.boolean().optional(),
+        riskClass: z.enum(["ADVISORY", "HIGH_RISK_BLOCK"]),
+        description: z.string().optional().nullable(),
+      }).parse(req.body);
+
+      const policy = await storage.createTestPolicy(input);
+
+      await eventBus.emitAndPersist({
+        eventType: EventTypes.GOVERNANCE_POLICY_CREATED,
+        entityType: "test_policy",
+        entityId: policy.id,
+        payload: { ruleType: policy.ruleType, sector: policy.sector, riskClass: policy.riskClass },
+        emittedBy: req.staffMember.id,
+      });
+
+      res.status(201).json(policy);
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      throw err;
+    }
+  });
+
+  app.get("/api/sovereign/governance/policies/:id", requireAuth, requireNationalOversight, async (req: any, res) => {
+    const policy = await storage.getTestPolicy(Number(req.params.id));
+    if (!policy) return res.status(404).json({ message: "Test policy not found" });
+    res.json(policy);
+  });
+
+  app.patch("/api/sovereign/governance/policies/:id/active", requireAuth, requireAdmin, async (req: any, res) => {
+    const input = z.object({ activeFlag: z.boolean() }).parse(req.body);
+    const updated = await storage.updateTestPolicyActive(Number(req.params.id), input.activeFlag);
+    if (!updated) return res.status(404).json({ message: "Test policy not found" });
+
+    await eventBus.emitAndPersist({
+      eventType: EventTypes.GOVERNANCE_POLICY_UPDATED,
+      entityType: "test_policy",
+      entityId: updated.id,
+      payload: { activeFlag: updated.activeFlag },
+      emittedBy: req.staffMember.id,
+    });
+
+    res.json(updated);
+  });
+
+  // === CLINICAL GOVERNANCE ENGINE: EVALUATE ===
+
+  app.post("/api/sovereign/governance/evaluate", requireAuth, async (req: any, res) => {
+    try {
+      const input = z.object({
+        testCode: z.string().min(1),
+        sector: z.enum(["GOVERNMENT", "PRIVATE"]),
+        patientId: z.number().int().positive(),
+        specimenId: z.number().int().positive().optional().nullable(),
+      }).parse(req.body);
+
+      const executionContext = resolveExecutionContext(req.tenantScope);
+
+      const result = await evaluateGovernance(
+        input.testCode,
+        input.sector,
+        input.patientId,
+        input.specimenId ?? null,
+        executionContext,
+        req.staffMember?.id || null,
+      );
+
+      res.json(result);
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      throw err;
+    }
+  });
+
+  // === CLINICAL GOVERNANCE ENGINE: GOVERNANCE EVENTS (read-only) ===
+
+  app.get("/api/sovereign/governance/events", requireAuth, requireNationalOversight, async (req: any, res) => {
+    const specimenId = req.query.specimenId ? Number(req.query.specimenId) : undefined;
+    const testCode = req.query.testCode as string | undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : 100;
+    const events = await storage.getGovernanceEvents(specimenId, testCode, limit);
+    res.json(events);
   });
 
   // === SOVEREIGN IDENTITY: VERIFICATION WORKFLOW ===

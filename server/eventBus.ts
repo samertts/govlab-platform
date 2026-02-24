@@ -29,4 +29,7 @@ export const EventTypes = {
   FACILITY_CREATED: "facility.created",
   IDENTITY_VERIFICATION_REQUEST: "identity.verification.request",
   IDENTITY_VERIFICATION_COMPLETED: "identity.verification.completed",
+  GOVERNANCE_EVALUATED: "governance.evaluated",
+  GOVERNANCE_POLICY_CREATED: "governance.policy.created",
+  GOVERNANCE_POLICY_UPDATED: "governance.policy.updated",
 } as const;
