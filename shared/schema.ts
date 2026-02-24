@@ -170,6 +170,10 @@ export const events = pgTable("events", {
   payload: jsonb("payload"),
   emittedBy: integer("emitted_by").references(() => staff.id),
   facilityId: integer("facility_id").references(() => facilities.id),
+  labId: integer("lab_id").references(() => labs.id),
+  executionContext: text("execution_context"),
+  processedStatus: text("processed_status").notNull().default("pending"),
+  processedAt: timestamp("processed_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -342,6 +346,127 @@ export const identityVerifications = pgTable("identity_verifications", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// === EVENT-DRIVEN PROCESSING: READ MODELS ===
+
+export const worklistView = pgTable("worklist_view", {
+  id: serial("id").primaryKey(),
+  labId: integer("lab_id").references(() => labs.id),
+  sampleId: integer("sample_id").references(() => samples.id),
+  patientId: integer("patient_id").references(() => patients.id),
+  sampleStatus: text("sample_status"),
+  pendingTestCount: integer("pending_test_count").default(0),
+  enteredTestCount: integer("entered_test_count").default(0),
+  verifiedTestCount: integer("verified_test_count").default(0),
+  priority: text("priority"),
+  lastEventType: text("last_event_type"),
+  lastEventAt: timestamp("last_event_at"),
+  projectedAt: timestamp("projected_at").defaultNow(),
+});
+
+export const nationalMetricsView = pgTable("national_metrics_view", {
+  id: serial("id").primaryKey(),
+  labId: integer("lab_id").references(() => labs.id),
+  metricType: text("metric_type").notNull(),
+  metricValue: integer("metric_value").notNull().default(0),
+  periodStart: timestamp("period_start"),
+  periodEnd: timestamp("period_end"),
+  metadata: jsonb("metadata"),
+  projectedAt: timestamp("projected_at").defaultNow(),
+});
+
+export const suggestionStreamView = pgTable("suggestion_stream_view", {
+  id: serial("id").primaryKey(),
+  labId: integer("lab_id").references(() => labs.id),
+  sourceEngine: text("source_engine").notNull(),
+  sourceEventId: integer("source_event_id"),
+  suggestionLevel: text("suggestion_level").notNull(),
+  testCode: text("test_code"),
+  patientId: integer("patient_id").references(() => patients.id),
+  specimenId: integer("specimen_id").references(() => samples.id),
+  summary: text("summary"),
+  metadata: jsonb("metadata"),
+  projectedAt: timestamp("projected_at").defaultNow(),
+});
+
+// === UNIFIED SUGGESTION ORCHESTRATOR ===
+
+export const unifiedSuggestionStream = pgTable("unified_suggestion_stream", {
+  id: serial("id").primaryKey(),
+  labId: integer("lab_id").references(() => labs.id),
+  sourceEngine: text("source_engine").notNull(),
+  sourceEventId: integer("source_event_id"),
+  priorityTier: text("priority_tier").notNull(),
+  suggestionLevel: text("suggestion_level").notNull(),
+  testCode: text("test_code"),
+  patientId: integer("patient_id").references(() => patients.id),
+  specimenId: integer("specimen_id").references(() => samples.id),
+  summary: text("summary").notNull(),
+  deduplicationKey: text("deduplication_key"),
+  executionContext: text("execution_context"),
+  metadata: jsonb("metadata"),
+  emittedAt: timestamp("emitted_at").defaultNow(),
+});
+
+// === NOTIFICATION ENGINE ===
+
+export const notificationTemplates = pgTable("notification_templates", {
+  id: serial("id").primaryKey(),
+  templateCode: text("template_code").notNull().unique(),
+  eventType: text("event_type").notNull(),
+  titleTemplate: text("title_template").notNull(),
+  bodyTemplate: text("body_template").notNull(),
+  notificationType: text("notification_type").notNull().default("INFO"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const notificationEvents = pgTable("notification_events", {
+  id: serial("id").primaryKey(),
+  eventId: integer("event_id").references(() => events.id),
+  templateId: integer("template_id").references(() => notificationTemplates.id),
+  resolvedTitle: text("resolved_title").notNull(),
+  resolvedBody: text("resolved_body").notNull(),
+  targetUserId: integer("target_user_id").references(() => staff.id),
+  notificationType: text("notification_type").notNull().default("INFO"),
+  deliveryStatus: text("delivery_status").notNull().default("pending"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const deliveryLogs = pgTable("delivery_logs", {
+  id: serial("id").primaryKey(),
+  notificationEventId: integer("notification_event_id").references(() => notificationEvents.id),
+  channel: text("channel").notNull().default("in_app"),
+  status: text("status").notNull().default("delivered"),
+  attemptCount: integer("attempt_count").default(1),
+  lastAttemptAt: timestamp("last_attempt_at").defaultNow(),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const notifications = pgTable("notifications", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => staff.id),
+  message: text("message").notNull(),
+  notificationType: text("notification_type").notNull().default("INFO"),
+  entityRef: text("entity_ref"),
+  isRead: boolean("is_read").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// === RUNTIME SECURITY: SESSION GUARDRAILS ===
+
+export const securityEvents = pgTable("security_events", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => staff.id),
+  eventType: text("event_type").notNull(),
+  severity: text("severity").notNull().default("LOW"),
+  details: jsonb("details"),
+  actionTaken: text("action_taken"),
+  sessionId: text("session_id"),
+  ipAddress: text("ip_address"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // === RELATIONS ===
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
@@ -470,7 +595,7 @@ export const insertTestTypeSchema = createInsertSchema(testTypes).omit({ id: tru
 export const insertSampleSchema = createInsertSchema(samples).omit({ id: true, createdAt: true, accessionNumber: true, barcode: true });
 export const insertTestResultSchema = createInsertSchema(testResults).omit({ id: true, enteredBy: true, verifiedBy: true, verifiedAt: true });
 export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, timestamp: true });
-export const insertEventSchema = createInsertSchema(events).omit({ id: true, createdAt: true });
+export const insertEventSchema = createInsertSchema(events).omit({ id: true, createdAt: true, processedAt: true });
 export const insertOfflineQueueSchema = createInsertSchema(offlineQueue).omit({ id: true, createdAt: true, processedAt: true });
 export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true, createdAt: true });
 export const insertInvoiceItemSchema = createInsertSchema(invoiceItems).omit({ id: true, createdAt: true });
@@ -483,6 +608,15 @@ export const insertGovernanceEventSchema = createInsertSchema(governanceEvents).
 export const insertClinicalPathwaySchema = createInsertSchema(clinicalPathways).omit({ id: true, createdAt: true });
 export const insertPathwayRuleSchema = createInsertSchema(pathwayRules).omit({ id: true, createdAt: true });
 export const insertClinicalPathwayEventSchema = createInsertSchema(clinicalPathwayEvents).omit({ id: true, createdAt: true });
+export const insertWorklistViewSchema = createInsertSchema(worklistView).omit({ id: true, projectedAt: true });
+export const insertNationalMetricsViewSchema = createInsertSchema(nationalMetricsView).omit({ id: true, projectedAt: true });
+export const insertSuggestionStreamViewSchema = createInsertSchema(suggestionStreamView).omit({ id: true, projectedAt: true });
+export const insertUnifiedSuggestionSchema = createInsertSchema(unifiedSuggestionStream).omit({ id: true, emittedAt: true });
+export const insertNotificationTemplateSchema = createInsertSchema(notificationTemplates).omit({ id: true, createdAt: true });
+export const insertNotificationEventSchema = createInsertSchema(notificationEvents).omit({ id: true, createdAt: true });
+export const insertDeliveryLogSchema = createInsertSchema(deliveryLogs).omit({ id: true, createdAt: true });
+export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
+export const insertSecurityEventSchema = createInsertSchema(securityEvents).omit({ id: true, createdAt: true });
 
 // === EXPLICIT API CONTRACT TYPES ===
 
@@ -510,6 +644,15 @@ export type Event = typeof events.$inferSelect;
 export type OfflineQueueItem = typeof offlineQueue.$inferSelect;
 export type Invoice = typeof invoices.$inferSelect;
 export type InvoiceItem = typeof invoiceItems.$inferSelect;
+export type WorklistViewEntry = typeof worklistView.$inferSelect;
+export type NationalMetricsViewEntry = typeof nationalMetricsView.$inferSelect;
+export type SuggestionStreamViewEntry = typeof suggestionStreamView.$inferSelect;
+export type UnifiedSuggestion = typeof unifiedSuggestionStream.$inferSelect;
+export type NotificationTemplate = typeof notificationTemplates.$inferSelect;
+export type NotificationEvent = typeof notificationEvents.$inferSelect;
+export type DeliveryLog = typeof deliveryLogs.$inferSelect;
+export type Notification = typeof notifications.$inferSelect;
+export type SecurityEvent = typeof securityEvents.$inferSelect;
 
 export type InsertLab = z.infer<typeof insertLabSchema>;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
@@ -535,6 +678,15 @@ export type InsertGovernanceEvent = z.infer<typeof insertGovernanceEventSchema>;
 export type InsertClinicalPathway = z.infer<typeof insertClinicalPathwaySchema>;
 export type InsertPathwayRule = z.infer<typeof insertPathwayRuleSchema>;
 export type InsertClinicalPathwayEvent = z.infer<typeof insertClinicalPathwayEventSchema>;
+export type InsertWorklistView = z.infer<typeof insertWorklistViewSchema>;
+export type InsertNationalMetricsView = z.infer<typeof insertNationalMetricsViewSchema>;
+export type InsertSuggestionStreamView = z.infer<typeof insertSuggestionStreamViewSchema>;
+export type InsertUnifiedSuggestion = z.infer<typeof insertUnifiedSuggestionSchema>;
+export type InsertNotificationTemplate = z.infer<typeof insertNotificationTemplateSchema>;
+export type InsertNotificationEvent = z.infer<typeof insertNotificationEventSchema>;
+export type InsertDeliveryLog = z.infer<typeof insertDeliveryLogSchema>;
+export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+export type InsertSecurityEvent = z.infer<typeof insertSecurityEventSchema>;
 
 // Request types
 export type CreatePatientRequest = InsertPatient;

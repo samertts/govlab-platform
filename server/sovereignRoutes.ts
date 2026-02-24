@@ -10,6 +10,8 @@ import { encryptNationalId, decryptNationalId, hashNationalId } from "./national
 import { processIdentityVerification, setupIdentityVerificationListener } from "./identityVerificationGateway";
 import { evaluateGovernance, evaluateGovernanceAsync } from "./governanceEngine";
 import { evaluatePathways, evaluatePathwaysPostCommit } from "./clinicalPathwaysEngine";
+import { startEventWorker, getWorkerStatus } from "./eventWorkerService";
+import { sessionAnomalyDetector } from "./securityGuardrails";
 
 function hashToken(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
@@ -1327,4 +1329,104 @@ export function registerSovereignRoutes(app: Express): void {
       })),
     });
   });
+
+  // === EVENT-DRIVEN PROCESSING: WORKER STATUS ===
+
+  app.get("/api/sovereign/worker/status", requireAuth, requireAdmin, async (_req, res) => {
+    res.json(getWorkerStatus());
+  });
+
+  // === EVENT-DRIVEN PROCESSING: READ MODELS ===
+
+  app.get("/api/sovereign/read-models/worklist", requireAuth, async (req: any, res) => {
+    const labFilter = getTenantLabFilter(req.tenantScope);
+    const data = await storage.getWorklistView(labFilter);
+    res.json(data);
+  });
+
+  app.get("/api/sovereign/read-models/metrics", requireAuth, requireNationalOversight, async (req: any, res) => {
+    const labId = req.query.labId ? Number(req.query.labId) : undefined;
+    const data = await storage.getNationalMetricsView(labId);
+    res.json(data);
+  });
+
+  app.get("/api/sovereign/read-models/suggestions", requireAuth, async (req: any, res) => {
+    const labFilter = getTenantLabFilter(req.tenantScope);
+    const limit = req.query.limit ? Number(req.query.limit) : 100;
+    const data = await storage.getSuggestionStreamView(labFilter, limit);
+    res.json(data);
+  });
+
+  // === UNIFIED SUGGESTION ORCHESTRATOR ===
+
+  app.get("/api/sovereign/suggestions/unified", requireAuth, async (req: any, res) => {
+    const labFilter = getTenantLabFilter(req.tenantScope);
+    const patientId = req.query.patientId ? Number(req.query.patientId) : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : 100;
+    const suggestions = await storage.getUnifiedSuggestions(labFilter, patientId, limit);
+    res.json(suggestions);
+  });
+
+  // === NOTIFICATIONS ===
+
+  app.get("/api/notifications", requireAuth, async (req: any, res) => {
+    const unreadOnly = req.query.unread === "true";
+    const limit = req.query.limit ? Number(req.query.limit) : 50;
+    const notifs = await storage.getNotifications(req.staffMember.id, unreadOnly, limit);
+    res.json(notifs);
+  });
+
+  app.get("/api/notifications/count", requireAuth, async (req: any, res) => {
+    const count = await storage.getUnreadNotificationCount(req.staffMember.id);
+    res.json({ unreadCount: count });
+  });
+
+  app.patch("/api/notifications/:id/read", requireAuth, async (req: any, res) => {
+    const updated = await storage.markNotificationRead(Number(req.params.id), req.staffMember.id);
+    if (!updated) return res.status(404).json({ message: "Notification not found" });
+    res.json(updated);
+  });
+
+  app.post("/api/notifications/read-all", requireAuth, async (req: any, res) => {
+    await storage.markAllNotificationsRead(req.staffMember.id);
+    res.json({ message: "All notifications marked as read" });
+  });
+
+  // === NOTIFICATION TEMPLATES (admin) ===
+
+  app.get("/api/sovereign/notification-templates", requireAuth, requireAdmin, async (req: any, res) => {
+    const eventType = req.query.eventType as string | undefined;
+    const templates = await storage.getNotificationTemplates(eventType);
+    res.json(templates);
+  });
+
+  app.post("/api/sovereign/notification-templates", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const input = z.object({
+        templateCode: z.string().min(1),
+        eventType: z.string().min(1),
+        titleTemplate: z.string().min(1),
+        bodyTemplate: z.string().min(1),
+        notificationType: z.enum(["INFO", "WARN", "CRITICAL"]).optional(),
+      }).parse(req.body);
+      const template = await storage.createNotificationTemplate(input);
+      res.status(201).json(template);
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      throw err;
+    }
+  });
+
+  // === SECURITY EVENTS (admin/oversight) ===
+
+  app.get("/api/sovereign/security-events", requireAuth, requireNationalOversight, async (req: any, res) => {
+    const userId = req.query.userId ? Number(req.query.userId) : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : 100;
+    const events = await storage.getSecurityEvents(userId, limit);
+    res.json(events);
+  });
+
+  // === START EVENT WORKER ===
+
+  startEventWorker();
 }

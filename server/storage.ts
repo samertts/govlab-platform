@@ -5,6 +5,8 @@ import {
   labs, nationalReports, policyEngine, nationalAccessAudit, identityVerifications,
   testPolicies, governanceEvents,
   clinicalPathways, pathwayRules, clinicalPathwayEvents,
+  worklistView, nationalMetricsView, suggestionStreamView,
+  unifiedSuggestionStream, notificationTemplates, notificationEvents, deliveryLogs, notifications, securityEvents,
   type Staff, type InsertStaff,
   type Patient, type InsertPatient, type UpdatePatientRequest,
   type TestType, type InsertTestType,
@@ -29,7 +31,16 @@ import {
   type OfflineQueueItem, type InsertOfflineQueueItem,
   type Invoice, type InsertInvoice, type InvoiceWithItems,
   type InvoiceItem, type InsertInvoiceItem,
-  type OrganizationWithHierarchy
+  type OrganizationWithHierarchy,
+  type WorklistViewEntry, type InsertWorklistView,
+  type NationalMetricsViewEntry, type InsertNationalMetricsView,
+  type SuggestionStreamViewEntry, type InsertSuggestionStreamView,
+  type UnifiedSuggestion, type InsertUnifiedSuggestion,
+  type NotificationTemplate, type InsertNotificationTemplate,
+  type NotificationEvent, type InsertNotificationEvent,
+  type DeliveryLog, type InsertDeliveryLog,
+  type Notification, type InsertNotification,
+  type SecurityEvent, type InsertSecurityEvent,
 } from "@shared/schema";
 import { eq, desc, and, sql, isNull } from "drizzle-orm";
 import { createHash } from "crypto";
@@ -169,6 +180,41 @@ export interface IStorage {
 
   // Clinical Pathways Engine — Patient test history check
   hasPatientCompletedTest(patientId: number, testCode: string, withinDays?: number): Promise<boolean>;
+
+  // Event-Driven Processing: Enhanced Events
+  getUnprocessedEvents(limit?: number): Promise<Event[]>;
+  markEventProcessed(id: number): Promise<void>;
+  markEventFailed(id: number): Promise<void>;
+
+  // Read Models
+  upsertWorklistView(entry: InsertWorklistView): Promise<WorklistViewEntry>;
+  getWorklistView(labId?: number): Promise<WorklistViewEntry[]>;
+  upsertNationalMetrics(entry: InsertNationalMetricsView): Promise<NationalMetricsViewEntry>;
+  getNationalMetricsView(labId?: number): Promise<NationalMetricsViewEntry[]>;
+  createSuggestionStreamEntry(entry: InsertSuggestionStreamView): Promise<SuggestionStreamViewEntry>;
+  getSuggestionStreamView(labId?: number, limit?: number): Promise<SuggestionStreamViewEntry[]>;
+
+  // Unified Suggestion Orchestrator
+  createUnifiedSuggestion(suggestion: InsertUnifiedSuggestion): Promise<UnifiedSuggestion>;
+  getUnifiedSuggestions(labId?: number, patientId?: number, limit?: number): Promise<UnifiedSuggestion[]>;
+  findDuplicateSuggestion(deduplicationKey: string): Promise<UnifiedSuggestion | undefined>;
+
+  // Notification Engine
+  createNotificationTemplate(template: InsertNotificationTemplate): Promise<NotificationTemplate>;
+  getNotificationTemplates(eventType?: string): Promise<NotificationTemplate[]>;
+  createNotificationEvent(event: InsertNotificationEvent): Promise<NotificationEvent>;
+  createDeliveryLog(log: InsertDeliveryLog): Promise<DeliveryLog>;
+
+  // Notifications (lightweight user-facing)
+  createNotification(notification: InsertNotification): Promise<Notification>;
+  getNotifications(userId: number, unreadOnly?: boolean, limit?: number): Promise<Notification[]>;
+  getUnreadNotificationCount(userId: number): Promise<number>;
+  markNotificationRead(id: number, userId?: number): Promise<Notification | undefined>;
+  markAllNotificationsRead(userId: number): Promise<void>;
+
+  // Security Events
+  createSecurityEvent(event: InsertSecurityEvent): Promise<SecurityEvent>;
+  getSecurityEvents(userId?: number, limit?: number): Promise<SecurityEvent[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -999,6 +1045,204 @@ export class DatabaseStorage implements IStorage {
       .limit(1);
 
     return results.length > 0;
+  }
+
+  // === Event-Driven Processing: Enhanced Events ===
+
+  async getUnprocessedEvents(limit: number = 100): Promise<Event[]> {
+    return await db.select().from(events)
+      .where(eq(events.processedStatus, "pending"))
+      .orderBy(events.createdAt)
+      .limit(limit);
+  }
+
+  async markEventProcessed(id: number): Promise<void> {
+    await db.update(events)
+      .set({ processedStatus: "processed", processedAt: new Date() })
+      .where(eq(events.id, id));
+  }
+
+  async markEventFailed(id: number): Promise<void> {
+    await db.update(events)
+      .set({ processedStatus: "failed" })
+      .where(eq(events.id, id));
+  }
+
+  // === Read Models ===
+
+  async upsertWorklistView(entry: InsertWorklistView): Promise<WorklistViewEntry> {
+    if (entry.sampleId) {
+      const [existing] = await db.select().from(worklistView)
+        .where(eq(worklistView.sampleId, entry.sampleId));
+      if (existing) {
+        const [updated] = await db.update(worklistView)
+          .set({ ...entry, projectedAt: new Date() })
+          .where(eq(worklistView.id, existing.id))
+          .returning();
+        return updated;
+      }
+    }
+    const [created] = await db.insert(worklistView).values(entry).returning();
+    return created;
+  }
+
+  async getWorklistView(labId?: number): Promise<WorklistViewEntry[]> {
+    if (labId) {
+      return await db.select().from(worklistView)
+        .where(eq(worklistView.labId, labId))
+        .orderBy(desc(worklistView.lastEventAt));
+    }
+    return await db.select().from(worklistView).orderBy(desc(worklistView.lastEventAt));
+  }
+
+  async upsertNationalMetrics(entry: InsertNationalMetricsView): Promise<NationalMetricsViewEntry> {
+    const conditions = [eq(nationalMetricsView.metricType, entry.metricType)];
+    if (entry.labId) conditions.push(eq(nationalMetricsView.labId, entry.labId));
+    const [existing] = await db.select().from(nationalMetricsView)
+      .where(and(...conditions));
+    if (existing) {
+      const [updated] = await db.update(nationalMetricsView)
+        .set({ ...entry, projectedAt: new Date() })
+        .where(eq(nationalMetricsView.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(nationalMetricsView).values(entry).returning();
+    return created;
+  }
+
+  async getNationalMetricsView(labId?: number): Promise<NationalMetricsViewEntry[]> {
+    if (labId) {
+      return await db.select().from(nationalMetricsView)
+        .where(eq(nationalMetricsView.labId, labId))
+        .orderBy(desc(nationalMetricsView.projectedAt));
+    }
+    return await db.select().from(nationalMetricsView).orderBy(desc(nationalMetricsView.projectedAt));
+  }
+
+  async createSuggestionStreamEntry(entry: InsertSuggestionStreamView): Promise<SuggestionStreamViewEntry> {
+    const [created] = await db.insert(suggestionStreamView).values(entry).returning();
+    return created;
+  }
+
+  async getSuggestionStreamView(labId?: number, limit: number = 100): Promise<SuggestionStreamViewEntry[]> {
+    if (labId) {
+      return await db.select().from(suggestionStreamView)
+        .where(eq(suggestionStreamView.labId, labId))
+        .orderBy(desc(suggestionStreamView.projectedAt))
+        .limit(limit);
+    }
+    return await db.select().from(suggestionStreamView)
+      .orderBy(desc(suggestionStreamView.projectedAt))
+      .limit(limit);
+  }
+
+  // === Unified Suggestion Orchestrator ===
+
+  async createUnifiedSuggestion(suggestion: InsertUnifiedSuggestion): Promise<UnifiedSuggestion> {
+    const [created] = await db.insert(unifiedSuggestionStream).values(suggestion).returning();
+    return created;
+  }
+
+  async getUnifiedSuggestions(labId?: number, patientId?: number, limit: number = 100): Promise<UnifiedSuggestion[]> {
+    const conditions = [];
+    if (labId) conditions.push(eq(unifiedSuggestionStream.labId, labId));
+    if (patientId) conditions.push(eq(unifiedSuggestionStream.patientId, patientId));
+    return await db.select().from(unifiedSuggestionStream)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(unifiedSuggestionStream.emittedAt))
+      .limit(limit);
+  }
+
+  async findDuplicateSuggestion(deduplicationKey: string): Promise<UnifiedSuggestion | undefined> {
+    const [found] = await db.select().from(unifiedSuggestionStream)
+      .where(eq(unifiedSuggestionStream.deduplicationKey, deduplicationKey))
+      .limit(1);
+    return found;
+  }
+
+  // === Notification Engine ===
+
+  async createNotificationTemplate(template: InsertNotificationTemplate): Promise<NotificationTemplate> {
+    const [created] = await db.insert(notificationTemplates).values(template).returning();
+    return created;
+  }
+
+  async getNotificationTemplates(eventType?: string): Promise<NotificationTemplate[]> {
+    if (eventType) {
+      return await db.select().from(notificationTemplates)
+        .where(and(eq(notificationTemplates.eventType, eventType), eq(notificationTemplates.isActive, true)));
+    }
+    return await db.select().from(notificationTemplates)
+      .where(eq(notificationTemplates.isActive, true));
+  }
+
+  async createNotificationEvent(event: InsertNotificationEvent): Promise<NotificationEvent> {
+    const [created] = await db.insert(notificationEvents).values(event).returning();
+    return created;
+  }
+
+  async createDeliveryLog(log: InsertDeliveryLog): Promise<DeliveryLog> {
+    const [created] = await db.insert(deliveryLogs).values(log).returning();
+    return created;
+  }
+
+  // === Notifications (lightweight user-facing) ===
+
+  async createNotification(notification: InsertNotification): Promise<Notification> {
+    const [created] = await db.insert(notifications).values(notification).returning();
+    return created;
+  }
+
+  async getNotifications(userId: number, unreadOnly?: boolean, limit: number = 50): Promise<Notification[]> {
+    const conditions = [eq(notifications.userId, userId)];
+    if (unreadOnly) conditions.push(eq(notifications.isRead, false));
+    return await db.select().from(notifications)
+      .where(and(...conditions))
+      .orderBy(desc(notifications.createdAt))
+      .limit(limit);
+  }
+
+  async getUnreadNotificationCount(userId: number): Promise<number> {
+    const result = await db.select({ count: sql<number>`count(*)` })
+      .from(notifications)
+      .where(and(eq(notifications.userId, userId), eq(notifications.isRead, false)));
+    return Number(result[0]?.count || 0);
+  }
+
+  async markNotificationRead(id: number, userId?: number): Promise<Notification | undefined> {
+    const conditions = [eq(notifications.id, id)];
+    if (userId) conditions.push(eq(notifications.userId, userId));
+    const [updated] = await db.update(notifications)
+      .set({ isRead: true, readAt: new Date() })
+      .where(and(...conditions))
+      .returning();
+    return updated;
+  }
+
+  async markAllNotificationsRead(userId: number): Promise<void> {
+    await db.update(notifications)
+      .set({ isRead: true })
+      .where(and(eq(notifications.userId, userId), eq(notifications.isRead, false)));
+  }
+
+  // === Security Events ===
+
+  async createSecurityEvent(event: InsertSecurityEvent): Promise<SecurityEvent> {
+    const [created] = await db.insert(securityEvents).values(event).returning();
+    return created;
+  }
+
+  async getSecurityEvents(userId?: number, limit: number = 100): Promise<SecurityEvent[]> {
+    if (userId) {
+      return await db.select().from(securityEvents)
+        .where(eq(securityEvents.userId, userId))
+        .orderBy(desc(securityEvents.createdAt))
+        .limit(limit);
+    }
+    return await db.select().from(securityEvents)
+      .orderBy(desc(securityEvents.createdAt))
+      .limit(limit);
   }
 }
 

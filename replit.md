@@ -43,7 +43,7 @@ Preferred communication style: Simple, everyday language.
 - **Database**: PostgreSQL via `node-postgres` (pg) pool
 - **ORM**: Drizzle ORM with PostgreSQL dialect
 - **Schema Management**: `drizzle-kit push` for applying schema changes (no migration files workflow by default)
-- **Tables**: users (Replit Auth), sessions (Replit Auth), staff, patients, testTypes, samples, testResults, auditLogs, organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems, labs, nationalReports, policyEngine, nationalAccessAudit, identityVerifications, testPolicies, governanceEvents, clinicalPathways, pathwayRules, clinicalPathwayEvents
+- **Tables**: users (Replit Auth), sessions (Replit Auth), staff, patients, testTypes, samples, testResults, auditLogs, organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems, labs, nationalReports, policyEngine, nationalAccessAudit, identityVerifications, testPolicies, governanceEvents, clinicalPathways, pathwayRules, clinicalPathwayEvents, worklistView, nationalMetricsView, suggestionStreamView, unifiedSuggestionStream, notificationTemplates, notificationEvents, deliveryLogs, notifications, securityEvents
 - **Key Relationships**: organizations → labs (multi-tenant); organizations → directorates → facilities; staff/patients/samples link to labs via labId; patients → samples → testResults → testTypes; auditLogs (hash-chained) reference testResults and staff; invoices → invoiceItems → testTypes
 - **Multi-tenant filtering**: Centralized via `server/tenantScope.ts` middleware. `attachTenantScope` runs after auth and attaches `req.tenantScope` with `{ labId, bypass }`. Helper functions `getTenantLabFilter`, `enforceTenantOwnership`, `stampTenantLabId` provide consistent scoping. Role `ministry_auditor` bypasses filtering and sees all data across labs.
 
@@ -83,7 +83,12 @@ server/               # Backend Express application
   oversightGuard.ts   # Write-guard middleware blocking national oversight roles from mutations
   nationalIdEncryption.ts  # AES-256-GCM field-level encryption for national IDs
   identityVerificationGateway.ts  # Mock verification gateway + async event listener
-  eventBus.ts         # Unified event bus (EventEmitter + persistence)
+  eventBus.ts         # Unified event bus (EventEmitter + persistence + payload sanitization)
+  eventWorkerService.ts  # Background event worker (polls unprocessed events, drives projections/orchestration/notifications)
+  readModelProjections.ts  # Read model projection logic (worklist_view, national_metrics_view, suggestion_stream_view)
+  unifiedSuggestionOrchestrator.ts  # Unified Suggestion Orchestrator (priority: Doctor Authority → Governance → Pathways → Knowledge)
+  notificationEngine.ts  # Event-driven notification generation (template-based + direct in-app)
+  securityGuardrails.ts  # Passive runtime security (session anomaly detection, event origin validation, stale session cleanup)
   db.ts               # Database connection pool
   vite.ts             # Vite dev server middleware
   static.ts           # Production static file serving
@@ -118,6 +123,14 @@ All sovereign routes are under `/api/sovereign/` or `/api/analyzers/`:
 - **Clinical Pathways — evaluate (analyzer)**: `POST /api/analyzers/pathways/evaluate` (Bearer token auth, ANALYZER_SOURCE context)
 - **Clinical Pathways — events**: `GET /api/sovereign/pathways/events` (national oversight, read-only)
 - **Technician bench**: `GET /api/sovereign/bench/queue`
+- **Event worker**: `GET /api/sovereign/worker/status` (admin only)
+- **Read models — worklist**: `GET /api/sovereign/read-models/worklist`
+- **Read models — metrics**: `GET /api/sovereign/read-models/metrics` (national oversight only)
+- **Read models — suggestions**: `GET /api/sovereign/read-models/suggestions`
+- **Unified suggestions**: `GET /api/sovereign/suggestions/unified`
+- **Notifications**: `GET /api/notifications`, `GET /api/notifications/count`, `PATCH /api/notifications/:id/read`, `POST /api/notifications/read-all`
+- **Notification templates**: `GET/POST /api/sovereign/notification-templates` (admin only)
+- **Security events**: `GET /api/sovereign/security-events` (national oversight only)
 
 ### Dev vs Production
 - **Development**: Vite dev server proxied through Express with HMR

@@ -8,6 +8,7 @@ import { type Staff } from "@shared/schema";
 import { registerSovereignRoutes } from "./sovereignRoutes";
 import { attachTenantScope, getTenantLabFilter, enforceTenantOwnership, stampTenantLabId } from "./tenantScope";
 import { blockWriteForOversightRoles } from "./oversightGuard";
+import { sessionAnomalyDetector, cleanupStaleSessions } from "./securityGuardrails";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -16,6 +17,10 @@ export async function registerRoutes(
   // === REPLIT AUTH SETUP ===
   await setupAuth(app);
   registerAuthRoutes(app);
+
+  // === PASSIVE SECURITY GUARDRAILS ===
+  app.use("/api/", sessionAnomalyDetector);
+  setInterval(cleanupStaleSessions, 300_000);
 
   // === SOVEREIGN PILOT ROUTES ===
   registerSovereignRoutes(app);
