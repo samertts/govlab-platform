@@ -41,6 +41,8 @@ import {
   type DeliveryLog, type InsertDeliveryLog,
   type Notification, type InsertNotification,
   type SecurityEvent, type InsertSecurityEvent,
+  governanceJobs,
+  type GovernanceJob, type InsertGovernanceJob,
 } from "@shared/schema";
 import { eq, desc, and, sql, isNull } from "drizzle-orm";
 import { createHash } from "crypto";
@@ -215,6 +217,15 @@ export interface IStorage {
   // Security Events
   createSecurityEvent(event: InsertSecurityEvent): Promise<SecurityEvent>;
   getSecurityEvents(userId?: number, limit?: number): Promise<SecurityEvent[]>;
+
+  // Governance Jobs (Asynchronous Clinical Governance)
+  createGovernanceJob(job: InsertGovernanceJob): Promise<GovernanceJob>;
+  getPendingGovernanceJobs(limit?: number): Promise<GovernanceJob[]>;
+  updateGovernanceJobStatus(id: number, status: string, result?: any, errorDetail?: string): Promise<GovernanceJob | undefined>;
+  incrementGovernanceJobRetry(id: number): Promise<GovernanceJob | undefined>;
+  getGovernanceJobsByEventId(eventId: number): Promise<GovernanceJob[]>;
+  getGovernanceJobStats(): Promise<{ pending: number; processing: number; completed: number; failed: number }>;
+  findDuplicateGovernanceJob(eventId: number, jobType: string): Promise<GovernanceJob | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1214,7 +1225,7 @@ export class DatabaseStorage implements IStorage {
     const conditions = [eq(notifications.id, id)];
     if (userId) conditions.push(eq(notifications.userId, userId));
     const [updated] = await db.update(notifications)
-      .set({ isRead: true, readAt: new Date() })
+      .set({ isRead: true })
       .where(and(...conditions))
       .returning();
     return updated;
@@ -1243,6 +1254,68 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(securityEvents)
       .orderBy(desc(securityEvents.createdAt))
       .limit(limit);
+  }
+
+  // === Governance Jobs (Asynchronous Clinical Governance) ===
+
+  async createGovernanceJob(job: InsertGovernanceJob): Promise<GovernanceJob> {
+    const [created] = await db.insert(governanceJobs).values(job).returning();
+    return created;
+  }
+
+  async getPendingGovernanceJobs(limit: number = 50): Promise<GovernanceJob[]> {
+    return await db.select().from(governanceJobs)
+      .where(eq(governanceJobs.status, "PENDING"))
+      .orderBy(governanceJobs.createdAt)
+      .limit(limit);
+  }
+
+  async updateGovernanceJobStatus(id: number, status: string, result?: any, errorDetail?: string): Promise<GovernanceJob | undefined> {
+    const setValues: any = { status };
+    if (status === "COMPLETED" || status === "FAILED") {
+      setValues.processedAt = new Date();
+    }
+    if (result !== undefined) setValues.result = result;
+    if (errorDetail !== undefined) setValues.errorDetail = errorDetail;
+    const [updated] = await db.update(governanceJobs)
+      .set(setValues)
+      .where(eq(governanceJobs.id, id))
+      .returning();
+    return updated;
+  }
+
+  async incrementGovernanceJobRetry(id: number): Promise<GovernanceJob | undefined> {
+    const [updated] = await db.update(governanceJobs)
+      .set({ retryCount: sql`${governanceJobs.retryCount} + 1` })
+      .where(eq(governanceJobs.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getGovernanceJobsByEventId(eventId: number): Promise<GovernanceJob[]> {
+    return await db.select().from(governanceJobs)
+      .where(eq(governanceJobs.eventId, eventId))
+      .orderBy(desc(governanceJobs.createdAt));
+  }
+
+  async getGovernanceJobStats(): Promise<{ pending: number; processing: number; completed: number; failed: number }> {
+    const result = await db.select({
+      status: governanceJobs.status,
+      count: sql<number>`count(*)::int`,
+    }).from(governanceJobs).groupBy(governanceJobs.status);
+    const stats = { pending: 0, processing: 0, completed: 0, failed: 0 };
+    for (const row of result) {
+      const key = row.status.toLowerCase() as keyof typeof stats;
+      if (key in stats) stats[key] = row.count;
+    }
+    return stats;
+  }
+
+  async findDuplicateGovernanceJob(eventId: number, jobType: string): Promise<GovernanceJob | undefined> {
+    const [existing] = await db.select().from(governanceJobs)
+      .where(and(eq(governanceJobs.eventId, eventId), eq(governanceJobs.jobType, jobType)))
+      .limit(1);
+    return existing;
   }
 }
 

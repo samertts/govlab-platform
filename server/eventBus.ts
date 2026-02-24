@@ -68,4 +68,8 @@ export const EventTypes = {
   NOTIFICATION_CREATED: "notification.created",
   SECURITY_ANOMALY: "security.anomaly",
   WORKER_CYCLE_COMPLETE: "worker.cycle.complete",
+  TEST_ORDERED: "test.ordered",
+  GOVERNANCE_JOB_CREATED: "governance.job.created",
+  GOVERNANCE_JOB_COMPLETED: "governance.job.completed",
+  GOVERNANCE_JOB_FAILED: "governance.job.failed",
 } as const;

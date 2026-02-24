@@ -11,6 +11,7 @@ import { processIdentityVerification, setupIdentityVerificationListener } from "
 import { evaluateGovernance, evaluateGovernanceAsync } from "./governanceEngine";
 import { evaluatePathways, evaluatePathwaysPostCommit } from "./clinicalPathwaysEngine";
 import { startEventWorker, getWorkerStatus } from "./eventWorkerService";
+import { startGovernanceWorker, getGovernanceWorkerStatus, setupGovernanceEventSubscriptions } from "./governanceWorkerService";
 import { sessionAnomalyDetector } from "./securityGuardrails";
 
 function hashToken(raw: string): string {
@@ -1426,7 +1427,30 @@ export function registerSovereignRoutes(app: Express): void {
     res.json(events);
   });
 
-  // === START EVENT WORKER ===
+  // === GOVERNANCE JOBS: STATUS & STATS ===
+
+  app.get("/api/sovereign/governance/worker/status", requireAuth, requireAdmin, async (_req, res) => {
+    res.json(getGovernanceWorkerStatus());
+  });
+
+  app.get("/api/sovereign/governance/jobs/stats", requireAuth, requireAdmin, async (_req, res) => {
+    const stats = await storage.getGovernanceJobStats();
+    res.json(stats);
+  });
+
+  app.get("/api/sovereign/governance/jobs", requireAuth, requireAdmin, async (req: any, res) => {
+    const eventId = req.query.eventId ? Number(req.query.eventId) : undefined;
+    if (eventId) {
+      const jobs = await storage.getGovernanceJobsByEventId(eventId);
+      return res.json(jobs);
+    }
+    const pending = await storage.getPendingGovernanceJobs(100);
+    res.json(pending);
+  });
+
+  // === START WORKERS & EVENT SUBSCRIPTIONS ===
 
   startEventWorker();
+  setupGovernanceEventSubscriptions();
+  startGovernanceWorker();
 }

@@ -453,6 +453,31 @@ export const notifications = pgTable("notifications", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// === ASYNCHRONOUS CLINICAL GOVERNANCE: JOB MODEL ===
+
+export const governanceJobs = pgTable("governance_jobs", {
+  id: serial("id").primaryKey(),
+  eventId: integer("event_id"),
+  jobType: varchar("job_type", { length: 50 }).notNull(),
+  jobSource: varchar("job_source", { length: 50 }).notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("PENDING"),
+  retryCount: integer("retry_count").default(0),
+  executionContext: varchar("execution_context", { length: 50 }),
+  labId: integer("lab_id"),
+  testCode: varchar("test_code", { length: 100 }),
+  patientId: integer("patient_id"),
+  specimenId: integer("specimen_id"),
+  payload: jsonb("payload"),
+  result: jsonb("result"),
+  errorDetail: text("error_detail"),
+  createdAt: timestamp("created_at").defaultNow(),
+  processedAt: timestamp("processed_at"),
+});
+
+export const insertGovernanceJobSchema = createInsertSchema(governanceJobs).omit({ id: true, createdAt: true, processedAt: true });
+export type InsertGovernanceJob = z.infer<typeof insertGovernanceJobSchema>;
+export type GovernanceJob = typeof governanceJobs.$inferSelect;
+
 // === RUNTIME SECURITY: SESSION GUARDRAILS ===
 
 export const securityEvents = pgTable("security_events", {

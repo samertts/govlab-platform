@@ -85,6 +85,7 @@ server/               # Backend Express application
   identityVerificationGateway.ts  # Mock verification gateway + async event listener
   eventBus.ts         # Unified event bus (EventEmitter + persistence + payload sanitization)
   eventWorkerService.ts  # Background event worker (polls unprocessed events, drives projections/orchestration/notifications)
+  governanceWorkerService.ts  # Asynchronous Clinical Governance worker (independent from event worker, policy checks + pathway evaluations)
   readModelProjections.ts  # Read model projection logic (worklist_view, national_metrics_view, suggestion_stream_view)
   unifiedSuggestionOrchestrator.ts  # Unified Suggestion Orchestrator (priority: Doctor Authority → Governance → Pathways → Knowledge)
   notificationEngine.ts  # Event-driven notification generation (template-based + direct in-app)
@@ -131,6 +132,8 @@ All sovereign routes are under `/api/sovereign/` or `/api/analyzers/`:
 - **Notifications**: `GET /api/notifications`, `GET /api/notifications/count`, `PATCH /api/notifications/:id/read`, `POST /api/notifications/read-all`
 - **Notification templates**: `GET/POST /api/sovereign/notification-templates` (admin only)
 - **Security events**: `GET /api/sovereign/security-events` (national oversight only)
+- **Governance worker**: `GET /api/sovereign/governance/worker/status` (admin only)
+- **Governance jobs**: `GET /api/sovereign/governance/jobs`, `GET /api/sovereign/governance/jobs/stats` (admin only)
 
 ### Dev vs Production
 - **Development**: Vite dev server proxied through Express with HMR
