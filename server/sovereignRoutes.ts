@@ -5,7 +5,7 @@ import { z } from "zod";
 import { createHash, randomBytes } from "crypto";
 import { isAuthenticated } from "./replit_integrations/auth";
 import type { Staff } from "@shared/schema";
-import { attachTenantScope, attachTokenTenantScope, getTenantLabFilter, enforceTenantOwnership } from "./tenantScope";
+import { attachTenantScope, attachTokenTenantScope, getTenantLabFilter, enforceTenantOwnership, resolveExecutionContext } from "./tenantScope";
 import { encryptNationalId, decryptNationalId, hashNationalId } from "./nationalIdEncryption";
 import { processIdentityVerification, setupIdentityVerificationListener } from "./identityVerificationGateway";
 
@@ -534,11 +534,7 @@ export function registerSovereignRoutes(app: Express): void {
         labId: patient.labId,
         reasonCode,
         accessScope: "patient_history",
-        executionContext: req.tenantScope?.source === "federation_source"
-          ? "FEDERATION_GATEWAY"
-          : req.tenantScope?.source === "analyzer_token"
-            ? "OFFLINE_SYNC"
-            : "USER_SESSION",
+        executionContext: resolveExecutionContext(req.tenantScope),
       });
 
       const allSamples = await storage.getSamples(undefined, patientId, undefined);
@@ -659,12 +655,7 @@ export function registerSovereignRoutes(app: Express): void {
       const encrypted = encryptNationalId(input.nationalIdNumber);
       await storage.updatePatient(patientId, { nationalIdEncrypted: encrypted } as any);
 
-      const executionContext = req.tenantScope?.source === "analyzer_token"
-        ? "ANALYZER_SOURCE"
-        : req.tenantScope?.source === "federation_source"
-          ? "FEDERATION_GATEWAY"
-          : "USER_SESSION";
-
+      const executionContext = resolveExecutionContext(req.tenantScope);
       const nationalIdHash = hashNationalId(input.nationalIdNumber);
 
       await eventBus.emitAndPersist({
@@ -692,6 +683,7 @@ export function registerSovereignRoutes(app: Express): void {
         patientId,
         nationalIdStored: true,
         verificationStatus: "PENDING",
+        executionContext,
         message: "National ID stored. Verification initiated asynchronously.",
       });
     } catch (err) {
@@ -716,12 +708,7 @@ export function registerSovereignRoutes(app: Express): void {
       }
 
       const nationalId = decryptNationalId(patient.nationalIdEncrypted);
-
-      const executionContext = req.tenantScope?.source === "analyzer_token"
-        ? "ANALYZER_SOURCE"
-        : req.tenantScope?.source === "federation_source"
-          ? "FEDERATION_GATEWAY"
-          : "USER_SESSION";
+      const executionContext = resolveExecutionContext(req.tenantScope);
 
       await processIdentityVerification(
         patientId,
@@ -775,6 +762,224 @@ export function registerSovereignRoutes(app: Express): void {
         : null,
     });
   });
+
+  // === ANALYZER-TOKEN IDENTITY ROUTES (ANALYZER_SOURCE context) ===
+
+  app.post("/api/analyzers/identity/set-national-id/:patientId", requireTokenAuth, async (req: any, res) => {
+    try {
+      const patientId = Number(req.params.patientId);
+      const input = z.object({
+        nationalIdNumber: z.string().min(1),
+      }).parse(req.body);
+
+      const patient = await storage.getPatient(patientId);
+      if (!patient) return res.status(404).json({ message: "Patient not found" });
+
+      if (!enforceTenantOwnership(req.tenantScope, patient.labId)) {
+        return res.status(403).json({ message: "Access denied: token lab scope mismatch" });
+      }
+
+      const executionContext = resolveExecutionContext(req.tenantScope);
+
+      const encrypted = encryptNationalId(input.nationalIdNumber);
+      await storage.updatePatient(patientId, { nationalIdEncrypted: encrypted } as any);
+
+      const nationalIdHash = hashNationalId(input.nationalIdNumber);
+
+      await eventBus.emitAndPersist({
+        eventType: EventTypes.IDENTITY_VERIFICATION_REQUEST,
+        entityType: "patient",
+        entityId: patientId,
+        payload: {
+          patientId,
+          nationalIdHash,
+          executionContext,
+        },
+        emittedBy: null,
+        facilityId: patient.facilityId || null,
+      });
+
+      await processIdentityVerification(
+        patientId,
+        input.nationalIdNumber,
+        executionContext
+      );
+
+      res.json({
+        patientId,
+        nationalIdStored: true,
+        verificationStatus: "PENDING",
+        executionContext,
+        message: "National ID stored via analyzer. Verification initiated.",
+      });
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      throw err;
+    }
+  });
+
+  app.post("/api/analyzers/identity/verify/:patientId", requireTokenAuth, async (req: any, res) => {
+    try {
+      const patientId = Number(req.params.patientId);
+
+      const patient = await storage.getPatient(patientId);
+      if (!patient) return res.status(404).json({ message: "Patient not found" });
+
+      if (!enforceTenantOwnership(req.tenantScope, patient.labId)) {
+        return res.status(403).json({ message: "Access denied: token lab scope mismatch" });
+      }
+
+      if (!patient.nationalIdEncrypted) {
+        return res.status(400).json({ message: "No national ID stored for this patient" });
+      }
+
+      const executionContext = resolveExecutionContext(req.tenantScope);
+      const nationalId = decryptNationalId(patient.nationalIdEncrypted);
+
+      await processIdentityVerification(
+        patientId,
+        nationalId,
+        executionContext
+      );
+
+      const latest = await storage.getLatestVerificationByPatient(patientId);
+      res.json({
+        patientId,
+        executionContext,
+        verification: latest
+          ? {
+              id: latest.id,
+              status: latest.verificationStatus,
+              source: latest.verificationSource,
+              executionContext: latest.executionContext,
+              verifiedAt: latest.verifiedAt,
+              createdAt: latest.createdAt,
+            }
+          : null,
+      });
+    } catch (err) {
+      throw err;
+    }
+  });
+
+  // === FEDERATION GATEWAY IDENTITY ROUTES (FEDERATION_GATEWAY context) ===
+
+  const requireFederationAuth = (req: any, res: any, next: any) => {
+    isAuthenticated(req, res, async (err?: any) => {
+      if (err) return next(err);
+      const claims = req.user?.claims;
+      if (!claims?.sub) return res.status(401).json({ message: "Unauthorized" });
+      const name = [claims.first_name, claims.last_name].filter(Boolean).join(" ") || claims.email || "User";
+      req.staffMember = await storage.findOrCreateStaffByReplitUser(claims.sub, name);
+
+      const labId = req.body?.labId || req.query?.labId ? Number(req.body?.labId || req.query?.labId) : null;
+      const { attachFederationTenantScope } = await import("./tenantScope");
+      req.tenantScope = attachFederationTenantScope(labId, req.staffMember.id);
+      next();
+    });
+  };
+
+  app.post("/api/federation/identity/set-national-id/:patientId", requireFederationAuth, async (req: any, res) => {
+    try {
+      const patientId = Number(req.params.patientId);
+      const input = z.object({
+        nationalIdNumber: z.string().min(1),
+        labId: z.number().optional(),
+      }).parse(req.body);
+
+      const patient = await storage.getPatient(patientId);
+      if (!patient) return res.status(404).json({ message: "Patient not found" });
+
+      if (!enforceTenantOwnership(req.tenantScope, patient.labId)) {
+        return res.status(403).json({ message: "Access denied: federation scope mismatch" });
+      }
+
+      const executionContext = resolveExecutionContext(req.tenantScope);
+
+      const encrypted = encryptNationalId(input.nationalIdNumber);
+      await storage.updatePatient(patientId, { nationalIdEncrypted: encrypted } as any);
+
+      const nationalIdHash = hashNationalId(input.nationalIdNumber);
+
+      await eventBus.emitAndPersist({
+        eventType: EventTypes.IDENTITY_VERIFICATION_REQUEST,
+        entityType: "patient",
+        entityId: patientId,
+        payload: {
+          patientId,
+          nationalIdHash,
+          executionContext,
+        },
+        emittedBy: req.staffMember?.id || null,
+        facilityId: patient.facilityId || null,
+      });
+
+      await processIdentityVerification(
+        patientId,
+        input.nationalIdNumber,
+        executionContext,
+        req.staffMember?.id
+      );
+
+      res.json({
+        patientId,
+        nationalIdStored: true,
+        verificationStatus: "PENDING",
+        executionContext,
+        message: "National ID stored via federation gateway. Verification initiated.",
+      });
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      throw err;
+    }
+  });
+
+  app.post("/api/federation/identity/verify/:patientId", requireFederationAuth, async (req: any, res) => {
+    try {
+      const patientId = Number(req.params.patientId);
+
+      const patient = await storage.getPatient(patientId);
+      if (!patient) return res.status(404).json({ message: "Patient not found" });
+
+      if (!enforceTenantOwnership(req.tenantScope, patient.labId)) {
+        return res.status(403).json({ message: "Access denied: federation scope mismatch" });
+      }
+
+      if (!patient.nationalIdEncrypted) {
+        return res.status(400).json({ message: "No national ID stored for this patient" });
+      }
+
+      const executionContext = resolveExecutionContext(req.tenantScope);
+      const nationalId = decryptNationalId(patient.nationalIdEncrypted);
+
+      await processIdentityVerification(
+        patientId,
+        nationalId,
+        executionContext,
+        req.staffMember?.id
+      );
+
+      const latest = await storage.getLatestVerificationByPatient(patientId);
+      res.json({
+        patientId,
+        executionContext,
+        verification: latest
+          ? {
+              id: latest.id,
+              status: latest.verificationStatus,
+              source: latest.verificationSource,
+              executionContext: latest.executionContext,
+              verifiedAt: latest.verifiedAt,
+              createdAt: latest.createdAt,
+            }
+          : null,
+      });
+    } catch (err) {
+      throw err;
+    }
+  });
+
+  // === USER SESSION IDENTITY HISTORY (read-only) ===
 
   app.get("/api/sovereign/identity/history/:patientId", requireAuth, async (req: any, res) => {
     const patientId = Number(req.params.patientId);

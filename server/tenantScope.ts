@@ -85,3 +85,22 @@ export function stampTenantLabId<T extends Record<string, any>>(scope: TenantSco
   }
   return input;
 }
+
+export type ExecutionContext = "USER_SESSION" | "ANALYZER_SOURCE" | "FEDERATION_GATEWAY" | "OFFLINE_SYNC";
+
+const SOURCE_TO_CONTEXT: Record<ExecutionContextSource, ExecutionContext> = {
+  user_session: "USER_SESSION",
+  analyzer_token: "ANALYZER_SOURCE",
+  federation_source: "FEDERATION_GATEWAY",
+};
+
+export function resolveExecutionContext(scope: TenantScope | undefined): ExecutionContext {
+  if (!scope) {
+    throw new Error("TenantScope is required to resolve execution context");
+  }
+  const ctx = SOURCE_TO_CONTEXT[scope.source];
+  if (!ctx) {
+    throw new Error(`Unknown tenant scope source: ${scope.source}`);
+  }
+  return ctx;
+}

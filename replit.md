@@ -103,7 +103,9 @@ All sovereign routes are under `/api/sovereign/` or `/api/analyzers/`:
 - **Oversight — patient history**: `GET /api/sovereign/oversight/patient/:id/history?reason_code=` (national oversight roles, requires reason_code)
 - **Oversight — policies**: `GET/POST /api/sovereign/oversight/policies`, `PATCH /api/sovereign/oversight/policies/:id/active`, `POST /api/sovereign/oversight/policies/evaluate`
 - **Oversight — access audit**: `GET /api/sovereign/oversight/access-audit`
-- **Identity verification**: `POST /api/sovereign/identity/set-national-id/:patientId`, `POST /api/sovereign/identity/verify/:patientId`, `GET /api/sovereign/identity/status/:patientId`, `GET /api/sovereign/identity/history/:patientId`
+- **Identity verification (user session)**: `POST /api/sovereign/identity/set-national-id/:patientId`, `POST /api/sovereign/identity/verify/:patientId`, `GET /api/sovereign/identity/status/:patientId`, `GET /api/sovereign/identity/history/:patientId`
+- **Identity verification (analyzer token)**: `POST /api/analyzers/identity/set-national-id/:patientId`, `POST /api/analyzers/identity/verify/:patientId` (Bearer token auth, ANALYZER_SOURCE context)
+- **Identity verification (federation)**: `POST /api/federation/identity/set-national-id/:patientId`, `POST /api/federation/identity/verify/:patientId` (federation auth, FEDERATION_GATEWAY context)
 - **Technician bench**: `GET /api/sovereign/bench/queue`
 
 ### Dev vs Production

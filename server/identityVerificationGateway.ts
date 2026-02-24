@@ -64,11 +64,18 @@ export async function processIdentityVerification(
   } catch (err) {
     await storage.updateIdentityVerificationStatus(verification.id, "PENDING");
 
+    const CONTEXT_TO_RETRY_PATH: Record<string, string> = {
+      USER_SESSION: `/api/sovereign/identity/verify/${patientId}`,
+      ANALYZER_SOURCE: `/api/analyzers/identity/verify/${patientId}`,
+      FEDERATION_GATEWAY: `/api/federation/identity/verify/${patientId}`,
+    };
+    const retryEndpoint = CONTEXT_TO_RETRY_PATH[executionContext] || `/api/sovereign/identity/verify/${patientId}`;
+
     await storage.enqueueOfflineOp({
       operationType: "identity_verification_retry",
-      endpoint: `/api/sovereign/identity/verify/${patientId}`,
+      endpoint: retryEndpoint,
       method: "POST",
-      payload: { patientId, executionContext },
+      payload: { patientId, executionContext, verificationId: verification.id },
       staffId: emittedBy || null,
       facilityId: null,
       status: "pending",
