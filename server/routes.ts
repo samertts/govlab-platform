@@ -5,6 +5,7 @@ import { api } from "@shared/routes";
 import { z } from "zod";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import { type Staff } from "@shared/schema";
+import { registerSovereignRoutes } from "./sovereignRoutes";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -13,6 +14,9 @@ export async function registerRoutes(
   // === REPLIT AUTH SETUP ===
   await setupAuth(app);
   registerAuthRoutes(app);
+
+  // === SOVEREIGN PILOT ROUTES ===
+  registerSovereignRoutes(app);
 
   // Middleware: use Replit Auth token refresh, then resolve to staff record
   const requireAuth = (req: any, res: any, next: any) => {

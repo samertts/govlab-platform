@@ -1,14 +1,30 @@
 import { db } from "./db";
 import {
   staff, patients, testTypes, samples, testResults, auditLogs,
+  organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems,
   type Staff, type InsertStaff,
   type Patient, type InsertPatient, type UpdatePatientRequest,
   type TestType, type InsertTestType,
-  type Sample, type InsertSample, type UpdateSampleRequest,
+  type Sample, type InsertSample,
   type TestResult, type InsertTestResult,
-  type SampleWithPatient, type AuditLog, type InsertAuditLog
+  type SampleWithPatient, type AuditLog, type InsertAuditLog,
+  type Organization, type InsertOrganization,
+  type Directorate, type InsertDirectorate, type DirectorateWithFacilities,
+  type Facility, type InsertFacility,
+  type ApiToken, type InsertApiToken,
+  type Event, type InsertEvent,
+  type OfflineQueueItem, type InsertOfflineQueueItem,
+  type Invoice, type InsertInvoice, type InvoiceWithItems,
+  type InvoiceItem, type InsertInvoiceItem,
+  type OrganizationWithHierarchy
 } from "@shared/schema";
-import { eq, desc, and, sql } from "drizzle-orm";
+import { eq, desc, and, sql, isNull } from "drizzle-orm";
+import { createHash } from "crypto";
+
+function computeAuditHash(prevHash: string | null, payload: Record<string, unknown>): string {
+  const data = JSON.stringify({ prevHash, ...payload });
+  return createHash("sha256").update(data).digest("hex");
+}
 
 export interface IStorage {
   // Staff
@@ -41,9 +57,43 @@ export interface IStorage {
   updateTestResult(id: number, resultValue: string, notes?: string): Promise<TestResult | undefined>;
   verifyTestResult(id: number, verifiedBy: number): Promise<TestResult | undefined>;
 
-  // Audit Logs
+  // Audit Logs (immutable, hash-chained)
   createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
   getAuditLogsByResult(testResultId: number): Promise<(AuditLog & { staffMember: Staff })[]>;
+
+  // Organizations hierarchy
+  getOrganizations(): Promise<Organization[]>;
+  getOrganization(id: number): Promise<OrganizationWithHierarchy | undefined>;
+  createOrganization(org: InsertOrganization): Promise<Organization>;
+  getDirectorates(orgId?: number): Promise<Directorate[]>;
+  createDirectorate(dir: InsertDirectorate): Promise<Directorate>;
+  getFacilities(directorateId?: number): Promise<Facility[]>;
+  getFacility(id: number): Promise<Facility | undefined>;
+  createFacility(fac: InsertFacility): Promise<Facility>;
+
+  // API Tokens (identity tokens)
+  createApiToken(token: InsertApiToken): Promise<ApiToken>;
+  getApiTokenByHash(tokenHash: string): Promise<ApiToken | undefined>;
+  deactivateApiToken(id: number): Promise<void>;
+  updateTokenLastUsed(id: number): Promise<void>;
+
+  // Events (unified event bus persistence)
+  createEvent(event: InsertEvent): Promise<Event>;
+  getEvents(entityType?: string, limit?: number): Promise<Event[]>;
+
+  // Offline Queue
+  enqueueOfflineOp(item: InsertOfflineQueueItem): Promise<OfflineQueueItem>;
+  getPendingOfflineOps(staffId?: number): Promise<OfflineQueueItem[]>;
+  markOfflineOpProcessed(id: number): Promise<void>;
+  markOfflineOpFailed(id: number, errorMessage: string): Promise<void>;
+
+  // Invoices / Pricing
+  createInvoice(invoice: InsertInvoice): Promise<Invoice>;
+  getInvoice(id: number): Promise<InvoiceWithItems | undefined>;
+  getInvoicesByPatient(patientId: number): Promise<Invoice[]>;
+  addInvoiceItem(item: InsertInvoiceItem): Promise<InvoiceItem>;
+  updateInvoiceTotals(invoiceId: number): Promise<Invoice | undefined>;
+  generateInvoiceForSample(sampleId: number, patientId: number, facilityId?: number | null): Promise<Invoice>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -243,9 +293,29 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  // Audit Logs
+  // Audit Logs (immutable, hash-chained)
   async createAuditLog(log: InsertAuditLog): Promise<AuditLog> {
-    const [newLog] = await db.insert(auditLogs).values(log).returning();
+    const [lastLog] = await db.select({ hash: auditLogs.hash })
+      .from(auditLogs)
+      .orderBy(desc(auditLogs.id))
+      .limit(1);
+
+    const prevHash = lastLog?.hash || null;
+    const hash = computeAuditHash(prevHash, {
+      userId: log.userId,
+      action: log.action,
+      oldValue: log.oldValue,
+      newValue: log.newValue,
+      testResultId: log.testResultId,
+      entityType: log.entityType,
+      entityId: log.entityId,
+    });
+
+    const [newLog] = await db.insert(auditLogs).values({
+      ...log,
+      prevHash,
+      hash,
+    }).returning();
     return newLog;
   }
 
@@ -260,6 +330,217 @@ export class DatabaseStorage implements IStorage {
     .orderBy(desc(auditLogs.timestamp));
 
     return rows.map(r => ({ ...r.log, staffMember: r.staffMember }));
+  }
+
+  // === SOVEREIGN PILOT: Organization Hierarchy ===
+
+  async getOrganizations(): Promise<Organization[]> {
+    return await db.select().from(organizations).orderBy(organizations.name);
+  }
+
+  async getOrganization(id: number): Promise<OrganizationWithHierarchy | undefined> {
+    const [org] = await db.select().from(organizations).where(eq(organizations.id, id));
+    if (!org) return undefined;
+
+    const dirs = await db.select().from(directorates).where(eq(directorates.organizationId, id));
+    const dirsWithFacilities = await Promise.all(dirs.map(async (dir) => {
+      const facs = await db.select().from(facilities).where(eq(facilities.directorateId, dir.id));
+      return { ...dir, facilities: facs };
+    }));
+
+    return { ...org, directorates: dirsWithFacilities };
+  }
+
+  async createOrganization(org: InsertOrganization): Promise<Organization> {
+    const [newOrg] = await db.insert(organizations).values(org).returning();
+    return newOrg;
+  }
+
+  async getDirectorates(orgId?: number): Promise<Directorate[]> {
+    if (orgId) {
+      return await db.select().from(directorates).where(eq(directorates.organizationId, orgId));
+    }
+    return await db.select().from(directorates).orderBy(directorates.name);
+  }
+
+  async createDirectorate(dir: InsertDirectorate): Promise<Directorate> {
+    const [newDir] = await db.insert(directorates).values(dir).returning();
+    return newDir;
+  }
+
+  async getFacilities(directorateId?: number): Promise<Facility[]> {
+    if (directorateId) {
+      return await db.select().from(facilities).where(eq(facilities.directorateId, directorateId));
+    }
+    return await db.select().from(facilities).orderBy(facilities.name);
+  }
+
+  async getFacility(id: number): Promise<Facility | undefined> {
+    const [fac] = await db.select().from(facilities).where(eq(facilities.id, id));
+    return fac;
+  }
+
+  async createFacility(fac: InsertFacility): Promise<Facility> {
+    const [newFac] = await db.insert(facilities).values(fac).returning();
+    return newFac;
+  }
+
+  // === SOVEREIGN PILOT: API Tokens ===
+
+  async createApiToken(token: InsertApiToken): Promise<ApiToken> {
+    const [newToken] = await db.insert(apiTokens).values(token).returning();
+    return newToken;
+  }
+
+  async getApiTokenByHash(tokenHash: string): Promise<ApiToken | undefined> {
+    const [token] = await db.select().from(apiTokens).where(
+      and(eq(apiTokens.tokenHash, tokenHash), eq(apiTokens.isActive, true))
+    );
+    return token;
+  }
+
+  async deactivateApiToken(id: number): Promise<void> {
+    await db.update(apiTokens).set({ isActive: false }).where(eq(apiTokens.id, id));
+  }
+
+  async updateTokenLastUsed(id: number): Promise<void> {
+    await db.update(apiTokens).set({ lastUsedAt: new Date() }).where(eq(apiTokens.id, id));
+  }
+
+  // === SOVEREIGN PILOT: Events ===
+
+  async createEvent(event: InsertEvent): Promise<Event> {
+    const [newEvent] = await db.insert(events).values(event).returning();
+    return newEvent;
+  }
+
+  async getEvents(entityType?: string, limit: number = 50): Promise<Event[]> {
+    if (entityType) {
+      return await db.select().from(events)
+        .where(eq(events.entityType, entityType))
+        .orderBy(desc(events.createdAt))
+        .limit(limit);
+    }
+    return await db.select().from(events).orderBy(desc(events.createdAt)).limit(limit);
+  }
+
+  // === SOVEREIGN PILOT: Offline Queue ===
+
+  async enqueueOfflineOp(item: InsertOfflineQueueItem): Promise<OfflineQueueItem> {
+    const [newItem] = await db.insert(offlineQueue).values(item).returning();
+    return newItem;
+  }
+
+  async getPendingOfflineOps(staffId?: number): Promise<OfflineQueueItem[]> {
+    if (staffId) {
+      return await db.select().from(offlineQueue)
+        .where(and(eq(offlineQueue.status, "pending"), eq(offlineQueue.staffId, staffId)))
+        .orderBy(offlineQueue.createdAt);
+    }
+    return await db.select().from(offlineQueue)
+      .where(eq(offlineQueue.status, "pending"))
+      .orderBy(offlineQueue.createdAt);
+  }
+
+  async markOfflineOpProcessed(id: number): Promise<void> {
+    await db.update(offlineQueue)
+      .set({ status: "processed", processedAt: new Date() })
+      .where(eq(offlineQueue.id, id));
+  }
+
+  async markOfflineOpFailed(id: number, errorMessage: string): Promise<void> {
+    await db.update(offlineQueue)
+      .set({ 
+        status: "failed", 
+        errorMessage,
+        retryCount: sql`${offlineQueue.retryCount} + 1`
+      })
+      .where(eq(offlineQueue.id, id));
+  }
+
+  // === SOVEREIGN PILOT: Invoices / Pricing ===
+
+  async createInvoice(invoice: InsertInvoice): Promise<Invoice> {
+    const [newInvoice] = await db.insert(invoices).values(invoice).returning();
+    return newInvoice;
+  }
+
+  async getInvoice(id: number): Promise<InvoiceWithItems | undefined> {
+    const [inv] = await db.select().from(invoices).where(eq(invoices.id, id));
+    if (!inv) return undefined;
+
+    const [patient] = await db.select().from(patients).where(eq(patients.id, inv.patientId));
+
+    const itemRows = await db.select({
+      item: invoiceItems,
+      testType: testTypes
+    })
+    .from(invoiceItems)
+    .innerJoin(testTypes, eq(invoiceItems.testTypeId, testTypes.id))
+    .where(eq(invoiceItems.invoiceId, id));
+
+    return {
+      ...inv,
+      patient,
+      items: itemRows.map(r => ({ ...r.item, testType: r.testType })),
+    };
+  }
+
+  async getInvoicesByPatient(patientId: number): Promise<Invoice[]> {
+    return await db.select().from(invoices)
+      .where(eq(invoices.patientId, patientId))
+      .orderBy(desc(invoices.createdAt));
+  }
+
+  async addInvoiceItem(item: InsertInvoiceItem): Promise<InvoiceItem> {
+    const [newItem] = await db.insert(invoiceItems).values(item).returning();
+    return newItem;
+  }
+
+  async updateInvoiceTotals(invoiceId: number): Promise<Invoice | undefined> {
+    const items = await db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, invoiceId));
+    const totalAmount = items.reduce((sum, item) => sum + item.lineTotal, 0);
+    const [inv] = await db.select().from(invoices).where(eq(invoices.id, invoiceId));
+    const discount = inv?.discount || 0;
+    const tax = inv?.tax || 0;
+    const netAmount = totalAmount - discount + tax;
+
+    const [updated] = await db.update(invoices)
+      .set({ totalAmount, netAmount })
+      .where(eq(invoices.id, invoiceId))
+      .returning();
+    return updated;
+  }
+
+  async generateInvoiceForSample(sampleId: number, patientId: number, facilityId?: number | null): Promise<Invoice> {
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const randomSuffix = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+    const invoiceNumber = `INV-${dateStr}-${randomSuffix}`;
+
+    const invoice = await this.createInvoice({
+      patientId,
+      facilityId: facilityId || null,
+      invoiceNumber,
+      totalAmount: 0,
+      netAmount: 0,
+      status: "draft",
+    });
+
+    const results = await this.getTestResultsBySample(sampleId);
+    for (const result of results) {
+      await this.addInvoiceItem({
+        invoiceId: invoice.id,
+        testResultId: result.id,
+        testTypeId: result.testType.id,
+        description: result.testType.name,
+        unitPrice: result.testType.price,
+        quantity: 1,
+        lineTotal: result.testType.price,
+      });
+    }
+
+    const updated = await this.updateInvoiceTotals(invoice.id);
+    return updated || invoice;
   }
 }
 

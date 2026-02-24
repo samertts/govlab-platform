@@ -8,7 +8,8 @@ import {
   Settings,
   LayoutDashboard,
   LogOut,
-  Menu
+  Menu,
+  Microscope
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@tanstack/react-query";
@@ -23,6 +24,7 @@ const navigation = [
   { name: 'Accessioning', href: '/accessioning', icon: FlaskConical },
   { name: 'Worklist', href: '/worklist', icon: ClipboardList },
   { name: 'Verification', href: '/verification', icon: CheckCircle },
+  { name: 'Technician Bench', href: '/technician', icon: Microscope },
   { name: 'Test Catalog', href: '/catalog', icon: Settings },
 ];
 

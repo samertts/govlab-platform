@@ -12,6 +12,7 @@ import Patients from "@/pages/Patients";
 import Accessioning from "@/pages/Accessioning";
 import Worklist from "@/pages/Worklist";
 import Verification from "@/pages/Verification";
+import TechnicianBench from "@/pages/TechnicianBench";
 import NotFound from "@/pages/not-found";
 import { Sidebar } from "@/components/layout/Sidebar";
 
@@ -74,6 +75,9 @@ function Router() {
       </Route>
       <Route path="/verification">
         <PrivateRoute component={Verification} />
+      </Route>
+      <Route path="/technician">
+        <PrivateRoute component={TechnicianBench} />
       </Route>
       
       <Route component={NotFound} />

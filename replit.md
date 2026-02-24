@@ -43,8 +43,8 @@ Preferred communication style: Simple, everyday language.
 - **Database**: PostgreSQL via `node-postgres` (pg) pool
 - **ORM**: Drizzle ORM with PostgreSQL dialect
 - **Schema Management**: `drizzle-kit push` for applying schema changes (no migration files workflow by default)
-- **Tables**: users (Replit Auth), sessions (Replit Auth), staff, patients, testTypes, samples, testResults, auditLogs
-- **Key Relationships**: patients → samples → testResults → testTypes; auditLogs reference testResults and staff; staff.replitUserId links to Replit Auth users
+- **Tables**: users (Replit Auth), sessions (Replit Auth), staff, patients, testTypes, samples, testResults, auditLogs, organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems
+- **Key Relationships**: organizations → directorates → facilities; patients/staff/samples optionally link to facilities; patients → samples → testResults → testTypes; auditLogs (hash-chained) reference testResults and staff; invoices → invoiceItems → testTypes
 
 ### Storage Layer
 - `server/storage.ts` defines an `IStorage` interface and `DatabaseStorage` implementation
@@ -68,13 +68,15 @@ client/               # Frontend React application
     components/       # Reusable components
       layout/         # Sidebar, PageHeader
       ui/             # shadcn/ui components
-    hooks/            # Custom hooks (use-auth, use-lab, use-patients, use-toast)
-    pages/            # Route pages (Dashboard, Patients, Accessioning, Worklist, Verification)
+    hooks/            # Custom hooks (use-auth, use-lab, use-patients, use-toast, use-offline)
+    pages/            # Route pages (Dashboard, Patients, Accessioning, Worklist, Verification, TechnicianBench)
     lib/              # Utilities (queryClient, utils)
 server/               # Backend Express application
   index.ts            # Entry point, middleware setup
   routes.ts           # API route registration with auth
   storage.ts          # Database storage interface and implementation
+  sovereignRoutes.ts  # Sovereign Pilot API routes (org hierarchy, tokens, analyzers, events, offline, invoices)
+  eventBus.ts         # Unified event bus (EventEmitter + persistence)
   db.ts               # Database connection pool
   vite.ts             # Vite dev server middleware
   static.ts           # Production static file serving
@@ -82,6 +84,16 @@ shared/               # Shared between client and server
   schema.ts           # Drizzle table definitions + Zod schemas
   routes.ts           # API contract definitions
 ```
+
+### Sovereign Pilot API Routes
+All sovereign routes are under `/api/sovereign/` or `/api/analyzers/`:
+- **Org hierarchy**: `GET/POST /api/sovereign/organizations`, `/api/sovereign/directorates`, `/api/sovereign/facilities`
+- **Identity tokens**: `POST /api/sovereign/tokens`, `DELETE /api/sovereign/tokens/:id`
+- **Analyzer gateway**: `POST /api/analyzers/ingest` (Bearer token auth)
+- **Event bus**: `GET /api/sovereign/events`, `GET /api/sovereign/events/stream` (SSE)
+- **Offline mode**: `POST /api/sovereign/offline/enqueue`, `GET /api/sovereign/offline/pending`, `POST /api/sovereign/offline/sync`
+- **Pricing**: `POST /api/sovereign/invoices/generate`, `GET /api/sovereign/invoices/:id`, `GET /api/sovereign/invoices?patientId=`
+- **Technician bench**: `GET /api/sovereign/bench/queue`
 
 ### Dev vs Production
 - **Development**: Vite dev server proxied through Express with HMR
