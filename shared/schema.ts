@@ -61,6 +61,7 @@ export const apiTokens = pgTable("api_tokens", {
   tokenHash: text("token_hash").notNull().unique(),
   scope: text("scope").notNull().default("analyzer"),
   facilityId: integer("facility_id").references(() => facilities.id),
+  labId: integer("lab_id").references(() => labs.id),
   issuedBy: integer("issued_by").references(() => staff.id),
   isActive: boolean("is_active").default(true),
   lastUsedAt: timestamp("last_used_at"),

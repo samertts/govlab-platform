@@ -1,9 +1,13 @@
 import type { Request, Response, NextFunction } from "express";
-import type { Staff } from "@shared/schema";
+import type { Staff, ApiToken } from "@shared/schema";
+
+export type ExecutionContextSource = "user_session" | "analyzer_token" | "federation_source";
 
 export interface TenantScope {
   labId: number | null;
   bypass: boolean;
+  source: ExecutionContextSource;
+  sourceId: number | null;
 }
 
 declare global {
@@ -17,16 +21,41 @@ declare global {
 export function attachTenantScope(req: any, _res: Response, next: NextFunction): void {
   const staffMember: Staff | undefined = req.staffMember;
   if (!staffMember) {
-    req.tenantScope = { labId: null, bypass: false };
+    req.tenantScope = { labId: null, bypass: false, source: "user_session", sourceId: null };
     return next();
   }
 
   if (staffMember.role === "ministry_auditor") {
-    req.tenantScope = { labId: null, bypass: true };
+    req.tenantScope = { labId: null, bypass: true, source: "user_session", sourceId: staffMember.id };
   } else {
-    req.tenantScope = { labId: staffMember.labId ?? null, bypass: false };
+    req.tenantScope = { labId: staffMember.labId ?? null, bypass: false, source: "user_session", sourceId: staffMember.id };
   }
   next();
+}
+
+export function attachTokenTenantScope(req: any, _res: Response, next: NextFunction): void {
+  const token: ApiToken | undefined = req.apiToken;
+  if (!token) {
+    req.tenantScope = { labId: null, bypass: false, source: "analyzer_token", sourceId: null };
+    return next();
+  }
+
+  req.tenantScope = {
+    labId: token.labId ?? null,
+    bypass: false,
+    source: "analyzer_token",
+    sourceId: token.id,
+  };
+  next();
+}
+
+export function attachFederationTenantScope(labId: number | null, federationSourceId: number | null): TenantScope {
+  return {
+    labId,
+    bypass: false,
+    source: "federation_source",
+    sourceId: federationSourceId,
+  };
 }
 
 export function getTenantLabFilter(scope: TenantScope): number | undefined {
@@ -40,7 +69,12 @@ export function enforceTenantOwnership(scope: TenantScope, resourceLabId: number
   if (scope.labId === null) {
     return resourceLabId === null;
   }
-  if (!resourceLabId) return true;
+  if (!resourceLabId) {
+    if (scope.source === "analyzer_token" || scope.source === "federation_source") {
+      return false;
+    }
+    return true;
+  }
   return scope.labId === resourceLabId;
 }
 

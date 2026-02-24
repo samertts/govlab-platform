@@ -5,7 +5,7 @@ import { z } from "zod";
 import { createHash, randomBytes } from "crypto";
 import { isAuthenticated } from "./replit_integrations/auth";
 import type { Staff } from "@shared/schema";
-import { attachTenantScope, getTenantLabFilter } from "./tenantScope";
+import { attachTenantScope, attachTokenTenantScope, getTenantLabFilter, enforceTenantOwnership } from "./tenantScope";
 
 function hashToken(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
@@ -43,7 +43,7 @@ const requireTokenAuth = async (req: any, res: Response, next: NextFunction) => 
   }
   await storage.updateTokenLastUsed(token.id);
   req.apiToken = token;
-  next();
+  attachTokenTenantScope(req, res, next);
 };
 
 export function registerSovereignRoutes(app: Express): void {
@@ -147,6 +147,7 @@ export function registerSovereignRoutes(app: Express): void {
         name: z.string().min(1),
         scope: z.enum(["analyzer", "readonly", "full"]).optional(),
         facilityId: z.number().optional().nullable(),
+        labId: z.number().optional().nullable(),
         expiresAt: z.string().datetime().optional().nullable(),
       }).parse(req.body);
 
@@ -158,6 +159,7 @@ export function registerSovereignRoutes(app: Express): void {
         tokenHash,
         scope: input.scope || "analyzer",
         facilityId: input.facilityId || null,
+        labId: input.labId || null,
         issuedBy: req.staffMember.id,
         expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
       });
@@ -209,6 +211,10 @@ export function registerSovereignRoutes(app: Express): void {
 
       if (!sample) {
         return res.status(404).json({ message: "Sample not found" });
+      }
+
+      if (!enforceTenantOwnership(req.tenantScope, sample.labId)) {
+        return res.status(403).json({ message: "Token not authorized for this lab's samples" });
       }
 
       const processedResults = [];
