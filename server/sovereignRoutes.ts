@@ -6,6 +6,8 @@ import { createHash, randomBytes } from "crypto";
 import { isAuthenticated } from "./replit_integrations/auth";
 import type { Staff } from "@shared/schema";
 import { attachTenantScope, attachTokenTenantScope, getTenantLabFilter, enforceTenantOwnership } from "./tenantScope";
+import { encryptNationalId, decryptNationalId, hashNationalId } from "./nationalIdEncryption";
+import { processIdentityVerification, setupIdentityVerificationListener } from "./identityVerificationGateway";
 
 function hashToken(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
@@ -634,5 +636,167 @@ export function registerSovereignRoutes(app: Express): void {
     const patientId = req.query.patientId ? Number(req.query.patientId) : undefined;
     const logs = await storage.getNationalAccessAuditLog(userId, patientId);
     res.json(logs);
+  });
+
+  // === SOVEREIGN IDENTITY: VERIFICATION WORKFLOW ===
+
+  setupIdentityVerificationListener();
+
+  app.post("/api/sovereign/identity/set-national-id/:patientId", requireAuth, async (req: any, res) => {
+    try {
+      const patientId = Number(req.params.patientId);
+      const input = z.object({
+        nationalIdNumber: z.string().min(1),
+      }).parse(req.body);
+
+      const patient = await storage.getPatient(patientId);
+      if (!patient) return res.status(404).json({ message: "Patient not found" });
+
+      if (!enforceTenantOwnership(req.tenantScope, patient.labId)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const encrypted = encryptNationalId(input.nationalIdNumber);
+      await storage.updatePatient(patientId, { nationalIdEncrypted: encrypted } as any);
+
+      const executionContext = req.tenantScope?.source === "analyzer_token"
+        ? "ANALYZER_SOURCE"
+        : req.tenantScope?.source === "federation_source"
+          ? "FEDERATION_GATEWAY"
+          : "USER_SESSION";
+
+      const nationalIdHash = hashNationalId(input.nationalIdNumber);
+
+      await eventBus.emitAndPersist({
+        eventType: EventTypes.IDENTITY_VERIFICATION_REQUEST,
+        entityType: "patient",
+        entityId: patientId,
+        payload: {
+          patientId,
+          nationalIdHash,
+          executionContext,
+          emittedBy: req.staffMember?.id,
+        },
+        emittedBy: req.staffMember?.id || null,
+        facilityId: patient.facilityId || null,
+      });
+
+      await processIdentityVerification(
+        patientId,
+        input.nationalIdNumber,
+        executionContext,
+        req.staffMember?.id
+      );
+
+      res.json({
+        patientId,
+        nationalIdStored: true,
+        verificationStatus: "PENDING",
+        message: "National ID stored. Verification initiated asynchronously.",
+      });
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      throw err;
+    }
+  });
+
+  app.post("/api/sovereign/identity/verify/:patientId", requireAuth, async (req: any, res) => {
+    try {
+      const patientId = Number(req.params.patientId);
+
+      const patient = await storage.getPatient(patientId);
+      if (!patient) return res.status(404).json({ message: "Patient not found" });
+
+      if (!enforceTenantOwnership(req.tenantScope, patient.labId)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      if (!patient.nationalIdEncrypted) {
+        return res.status(400).json({ message: "No national ID stored for this patient" });
+      }
+
+      const nationalId = decryptNationalId(patient.nationalIdEncrypted);
+
+      const executionContext = req.tenantScope?.source === "analyzer_token"
+        ? "ANALYZER_SOURCE"
+        : req.tenantScope?.source === "federation_source"
+          ? "FEDERATION_GATEWAY"
+          : "USER_SESSION";
+
+      await processIdentityVerification(
+        patientId,
+        nationalId,
+        executionContext,
+        req.staffMember?.id
+      );
+
+      const latest = await storage.getLatestVerificationByPatient(patientId);
+      res.json({
+        patientId,
+        verification: latest
+          ? {
+              id: latest.id,
+              status: latest.verificationStatus,
+              source: latest.verificationSource,
+              executionContext: latest.executionContext,
+              verifiedAt: latest.verifiedAt,
+              createdAt: latest.createdAt,
+            }
+          : null,
+      });
+    } catch (err) {
+      throw err;
+    }
+  });
+
+  app.get("/api/sovereign/identity/status/:patientId", requireAuth, async (req: any, res) => {
+    const patientId = Number(req.params.patientId);
+
+    const patient = await storage.getPatient(patientId);
+    if (!patient) return res.status(404).json({ message: "Patient not found" });
+
+    if (!enforceTenantOwnership(req.tenantScope, patient.labId)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const latest = await storage.getLatestVerificationByPatient(patientId);
+    res.json({
+      patientId,
+      hasNationalId: !!patient.nationalIdEncrypted,
+      latestVerification: latest
+        ? {
+            id: latest.id,
+            status: latest.verificationStatus,
+            source: latest.verificationSource,
+            executionContext: latest.executionContext,
+            verifiedAt: latest.verifiedAt,
+            createdAt: latest.createdAt,
+          }
+        : null,
+    });
+  });
+
+  app.get("/api/sovereign/identity/history/:patientId", requireAuth, async (req: any, res) => {
+    const patientId = Number(req.params.patientId);
+
+    const patient = await storage.getPatient(patientId);
+    if (!patient) return res.status(404).json({ message: "Patient not found" });
+
+    if (!enforceTenantOwnership(req.tenantScope, patient.labId)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const verifications = await storage.getIdentityVerificationsByPatient(patientId);
+    res.json({
+      patientId,
+      verifications: verifications.map(v => ({
+        id: v.id,
+        status: v.verificationStatus,
+        source: v.verificationSource,
+        executionContext: v.executionContext,
+        verifiedAt: v.verifiedAt,
+        createdAt: v.createdAt,
+      })),
+    });
   });
 }

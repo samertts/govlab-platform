@@ -27,4 +27,6 @@ export const EventTypes = {
   TOKEN_ISSUED: "token.issued",
   ORG_CREATED: "org.created",
   FACILITY_CREATED: "facility.created",
+  IDENTITY_VERIFICATION_REQUEST: "identity.verification.request",
+  IDENTITY_VERIFICATION_COMPLETED: "identity.verification.completed",
 } as const;

@@ -43,7 +43,7 @@ Preferred communication style: Simple, everyday language.
 - **Database**: PostgreSQL via `node-postgres` (pg) pool
 - **ORM**: Drizzle ORM with PostgreSQL dialect
 - **Schema Management**: `drizzle-kit push` for applying schema changes (no migration files workflow by default)
-- **Tables**: users (Replit Auth), sessions (Replit Auth), staff, patients, testTypes, samples, testResults, auditLogs, organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems, labs, nationalReports, policyEngine, nationalAccessAudit
+- **Tables**: users (Replit Auth), sessions (Replit Auth), staff, patients, testTypes, samples, testResults, auditLogs, organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems, labs, nationalReports, policyEngine, nationalAccessAudit, identityVerifications
 - **Key Relationships**: organizations → labs (multi-tenant); organizations → directorates → facilities; staff/patients/samples link to labs via labId; patients → samples → testResults → testTypes; auditLogs (hash-chained) reference testResults and staff; invoices → invoiceItems → testTypes
 - **Multi-tenant filtering**: Centralized via `server/tenantScope.ts` middleware. `attachTenantScope` runs after auth and attaches `req.tenantScope` with `{ labId, bypass }`. Helper functions `getTenantLabFilter`, `enforceTenantOwnership`, `stampTenantLabId` provide consistent scoping. Role `ministry_auditor` bypasses filtering and sees all data across labs.
 
@@ -79,6 +79,8 @@ server/               # Backend Express application
   sovereignRoutes.ts  # Sovereign Pilot API routes (org hierarchy, tokens, analyzers, events, offline, invoices)
   tenantScope.ts      # Centralized multi-tenant scope middleware (attachTenantScope, helpers)
   oversightGuard.ts   # Write-guard middleware blocking national oversight roles from mutations
+  nationalIdEncryption.ts  # AES-256-GCM field-level encryption for national IDs
+  identityVerificationGateway.ts  # Mock verification gateway + async event listener
   eventBus.ts         # Unified event bus (EventEmitter + persistence)
   db.ts               # Database connection pool
   vite.ts             # Vite dev server middleware
@@ -101,6 +103,7 @@ All sovereign routes are under `/api/sovereign/` or `/api/analyzers/`:
 - **Oversight — patient history**: `GET /api/sovereign/oversight/patient/:id/history?reason_code=` (national oversight roles, requires reason_code)
 - **Oversight — policies**: `GET/POST /api/sovereign/oversight/policies`, `PATCH /api/sovereign/oversight/policies/:id/active`, `POST /api/sovereign/oversight/policies/evaluate`
 - **Oversight — access audit**: `GET /api/sovereign/oversight/access-audit`
+- **Identity verification**: `POST /api/sovereign/identity/set-national-id/:patientId`, `POST /api/sovereign/identity/verify/:patientId`, `GET /api/sovereign/identity/status/:patientId`, `GET /api/sovereign/identity/history/:patientId`
 - **Technician bench**: `GET /api/sovereign/bench/queue`
 
 ### Dev vs Production
@@ -128,3 +131,4 @@ All sovereign routes are under `/api/sovereign/` or `/api/analyzers/`:
 ### Environment Variables
 - `DATABASE_URL` (required): PostgreSQL connection string
 - `SESSION_SECRET` (optional, defaults to "secret"): Express session secret
+- `NATIONAL_ID_ENCRYPTION_KEY` (required for identity verification): 32-byte hex key for AES-256-GCM field-level encryption

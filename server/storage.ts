@@ -2,7 +2,7 @@ import { db } from "./db";
 import {
   staff, patients, testTypes, samples, testResults, auditLogs,
   organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems,
-  labs, nationalReports, policyEngine, nationalAccessAudit,
+  labs, nationalReports, policyEngine, nationalAccessAudit, identityVerifications,
   type Staff, type InsertStaff,
   type Patient, type InsertPatient, type UpdatePatientRequest,
   type TestType, type InsertTestType,
@@ -16,6 +16,7 @@ import {
   type NationalReport, type InsertNationalReport,
   type Policy, type InsertPolicy,
   type NationalAccessAuditEntry, type InsertNationalAccessAudit,
+  type IdentityVerification, type InsertIdentityVerification,
   type ApiToken, type InsertApiToken,
   type Event, type InsertEvent,
   type OfflineQueueItem, type InsertOfflineQueueItem,
@@ -121,6 +122,13 @@ export interface IStorage {
   // National Access Audit (immutable)
   logNationalAccess(entry: InsertNationalAccessAudit): Promise<NationalAccessAuditEntry>;
   getNationalAccessAuditLog(userId?: number, patientId?: number): Promise<NationalAccessAuditEntry[]>;
+
+  // Identity Verification (sovereign identity)
+  createIdentityVerification(verification: InsertIdentityVerification): Promise<IdentityVerification>;
+  updateIdentityVerificationStatus(id: number, status: string, verifiedAt?: Date): Promise<IdentityVerification | undefined>;
+  getIdentityVerificationsByPatient(patientId: number): Promise<IdentityVerification[]>;
+  getIdentityVerification(id: number): Promise<IdentityVerification | undefined>;
+  getLatestVerificationByPatient(patientId: number): Promise<IdentityVerification | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -712,6 +720,42 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(nationalAccessAudit)
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(desc(nationalAccessAudit.accessedAt));
+  }
+
+  // === Identity Verification ===
+
+  async createIdentityVerification(verification: InsertIdentityVerification): Promise<IdentityVerification> {
+    const [record] = await db.insert(identityVerifications).values(verification).returning();
+    return record;
+  }
+
+  async updateIdentityVerificationStatus(id: number, status: string, verifiedAt?: Date): Promise<IdentityVerification | undefined> {
+    const updates: Record<string, any> = { verificationStatus: status };
+    if (verifiedAt) updates.verifiedAt = verifiedAt;
+    const [updated] = await db.update(identityVerifications)
+      .set(updates)
+      .where(eq(identityVerifications.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getIdentityVerificationsByPatient(patientId: number): Promise<IdentityVerification[]> {
+    return await db.select().from(identityVerifications)
+      .where(eq(identityVerifications.patientId, patientId))
+      .orderBy(desc(identityVerifications.createdAt));
+  }
+
+  async getIdentityVerification(id: number): Promise<IdentityVerification | undefined> {
+    const [record] = await db.select().from(identityVerifications).where(eq(identityVerifications.id, id));
+    return record;
+  }
+
+  async getLatestVerificationByPatient(patientId: number): Promise<IdentityVerification | undefined> {
+    const [record] = await db.select().from(identityVerifications)
+      .where(eq(identityVerifications.patientId, patientId))
+      .orderBy(desc(identityVerifications.createdAt))
+      .limit(1);
+    return record;
   }
 }
 

@@ -92,6 +92,7 @@ export const patients = pgTable("patients", {
   contactNumber: text("contact_number"),
   email: text("email"),
   address: text("address"),
+  nationalIdEncrypted: text("national_id_encrypted").unique(),
   facilityId: integer("facility_id").references(() => facilities.id),
   labId: integer("lab_id").references(() => labs.id),
   createdAt: timestamp("created_at").defaultNow(),
@@ -262,6 +263,19 @@ export const nationalAccessAudit = pgTable("national_access_audit", {
   accessedAt: timestamp("accessed_at").defaultNow().notNull(),
 });
 
+// === SOVEREIGN IDENTITY: VERIFICATION RECORDS ===
+
+export const identityVerifications = pgTable("identity_verifications", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").notNull().references(() => patients.id),
+  nationalIdHash: text("national_id_hash").notNull(),
+  verificationStatus: text("verification_status").notNull().default("PENDING"),
+  verificationSource: text("verification_source").notNull().default("MOCK_GATEWAY"),
+  executionContext: text("execution_context").notNull(),
+  verifiedAt: timestamp("verified_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // === RELATIONS ===
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
@@ -397,11 +411,13 @@ export const insertInvoiceItemSchema = createInsertSchema(invoiceItems).omit({ i
 export const insertNationalReportSchema = createInsertSchema(nationalReports).omit({ id: true, createdAt: true });
 export const insertPolicySchema = createInsertSchema(policyEngine).omit({ id: true, createdAt: true });
 export const insertNationalAccessAuditSchema = createInsertSchema(nationalAccessAudit).omit({ id: true, accessedAt: true });
+export const insertIdentityVerificationSchema = createInsertSchema(identityVerifications).omit({ id: true, createdAt: true });
 
 // === EXPLICIT API CONTRACT TYPES ===
 
 export type Policy = typeof policyEngine.$inferSelect;
 export type NationalAccessAuditEntry = typeof nationalAccessAudit.$inferSelect;
+export type IdentityVerification = typeof identityVerifications.$inferSelect;
 export type NationalReport = typeof nationalReports.$inferSelect;
 export type Lab = typeof labs.$inferSelect;
 export type Organization = typeof organizations.$inferSelect;
@@ -437,6 +453,7 @@ export type InsertInvoiceItem = z.infer<typeof insertInvoiceItemSchema>;
 export type InsertNationalReport = z.infer<typeof insertNationalReportSchema>;
 export type InsertPolicy = z.infer<typeof insertPolicySchema>;
 export type InsertNationalAccessAudit = z.infer<typeof insertNationalAccessAuditSchema>;
+export type InsertIdentityVerification = z.infer<typeof insertIdentityVerificationSchema>;
 
 // Request types
 export type CreatePatientRequest = InsertPatient;
