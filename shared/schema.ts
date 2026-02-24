@@ -838,6 +838,60 @@ export const insertSyncConflictPolicySchema = createInsertSchema(syncConflictPol
 export const insertConflictAuditLogSchema = createInsertSchema(conflictAuditLog).omit({ id: true, createdAt: true });
 export const insertFacilityConnectivityStatusSchema = createInsertSchema(facilityConnectivityStatus).omit({ id: true, updatedAt: true });
 
+// === AI-ASSISTED CLINICAL INTELLIGENCE LAYER: INTELLIGENCE EVENTS ===
+
+export const intelligenceEvents = pgTable("intelligence_events", {
+  id: serial("id").primaryKey(),
+  sourceEventId: integer("source_event_id").references(() => events.id),
+  sourceEventType: varchar("source_event_type", { length: 100 }).notNull(),
+  eventLane: varchar("event_lane", { length: 30 }).notNull().default("INTELLIGENCE"),
+  testCode: varchar("test_code", { length: 100 }),
+  facilityCode: varchar("facility_code", { length: 100 }),
+  sector: varchar("sector", { length: 100 }),
+  anonymizedPayload: jsonb("anonymized_payload"),
+  processingStatus: varchar("processing_status", { length: 30 }).notNull().default("PENDING"),
+  processedAt: timestamp("processed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// === AI-ASSISTED CLINICAL INTELLIGENCE LAYER: ANONYMIZED METRICS ===
+
+export const anonymizedMetrics = pgTable("anonymized_metrics", {
+  metricId: serial("metric_id").primaryKey(),
+  testCode: varchar("test_code", { length: 100 }).notNull(),
+  facilityCode: varchar("facility_code", { length: 100 }).notNull(),
+  sector: varchar("sector", { length: 100 }),
+  timestampBucket: timestamp("timestamp_bucket").notNull(),
+  count: integer("count").notNull().default(0),
+  aggregationLevel: varchar("aggregation_level", { length: 30 }).notNull().default("HOURLY"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// === AI-ASSISTED CLINICAL INTELLIGENCE LAYER: INTELLIGENCE ALERTS ===
+
+export const intelligenceAlerts = pgTable("intelligence_alerts", {
+  id: serial("id").primaryKey(),
+  alertType: varchar("alert_type", { length: 50 }).notNull(),
+  severity: varchar("severity", { length: 20 }).notNull().default("ADVISORY"),
+  facilityCode: varchar("facility_code", { length: 100 }),
+  sector: varchar("sector", { length: 100 }),
+  testCode: varchar("test_code", { length: 100 }),
+  title: text("title").notNull(),
+  description: text("description"),
+  payload: jsonb("payload"),
+  classification: varchar("classification", { length: 50 }).notNull().default("CLINICAL_SUGGESTION"),
+  acknowledged: boolean("acknowledged").default(false),
+  acknowledgedBy: integer("acknowledged_by").references(() => staff.id),
+  acknowledgedAt: timestamp("acknowledged_at"),
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertIntelligenceEventSchema = createInsertSchema(intelligenceEvents).omit({ id: true, createdAt: true, processedAt: true });
+export const insertAnonymizedMetricSchema = createInsertSchema(anonymizedMetrics).omit({ metricId: true, createdAt: true });
+export const insertIntelligenceAlertSchema = createInsertSchema(intelligenceAlerts).omit({ id: true, createdAt: true, acknowledgedAt: true });
+
 // === EXPLICIT API CONTRACT TYPES ===
 
 export type Policy = typeof policyEngine.$inferSelect;
@@ -885,6 +939,9 @@ export type LocalSyncEvent = typeof localSyncEvents.$inferSelect;
 export type SyncConflictPolicyEntry = typeof syncConflictPolicy.$inferSelect;
 export type ConflictAuditLogEntry = typeof conflictAuditLog.$inferSelect;
 export type FacilityConnectivityStatusEntry = typeof facilityConnectivityStatus.$inferSelect;
+export type IntelligenceEvent = typeof intelligenceEvents.$inferSelect;
+export type AnonymizedMetric = typeof anonymizedMetrics.$inferSelect;
+export type IntelligenceAlert = typeof intelligenceAlerts.$inferSelect;
 
 export type InsertLab = z.infer<typeof insertLabSchema>;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
@@ -931,6 +988,9 @@ export type InsertLocalSyncEvent = z.infer<typeof insertLocalSyncEventSchema>;
 export type InsertSyncConflictPolicy = z.infer<typeof insertSyncConflictPolicySchema>;
 export type InsertConflictAuditLog = z.infer<typeof insertConflictAuditLogSchema>;
 export type InsertFacilityConnectivityStatus = z.infer<typeof insertFacilityConnectivityStatusSchema>;
+export type InsertIntelligenceEvent = z.infer<typeof insertIntelligenceEventSchema>;
+export type InsertAnonymizedMetric = z.infer<typeof insertAnonymizedMetricSchema>;
+export type InsertIntelligenceAlert = z.infer<typeof insertIntelligenceAlertSchema>;
 
 // Request types
 export type CreatePatientRequest = InsertPatient;

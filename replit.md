@@ -53,18 +53,27 @@ GovLab LIS is built with a clear separation of concerns between its frontend and
 - **Security Resilience**: Signature validation failures quarantine events (never block LIS workflows). Expired tokens allow local LIS operations but deny national-level propagation.
 - **API Routes**: `/api/sovereign/zero-trust/identities/*`, `/api/sovereign/zero-trust/quarantine/*`, `/api/sovereign/zero-trust/audit-trail/*`, `/api/sovereign/zero-trust/cross-facility-access`.
 
+### AI-Assisted Clinical Intelligence Layer
+- **Intelligence Event Stream** (`server/intelligenceWorker.ts`): Consumes post-commit clinical events (RESULT_VERIFIED, QC_FLAGGED, TEST_ORDERED) in event_lane=INTELLIGENCE. Events emitted after database commit only; intelligence processing never runs inline with clinical transactions.
+- **Anonymized Metrics** (`anonymized_metrics` table): Stores aggregated, de-identified operational data. No patient identifiers allowed. Aggregation occurs server-side before persistence. Time-bucketed (HOURLY/DAILY) counts by test_code and facility_code.
+- **Data Protection Guardrails** (`server/intelligenceGuardrails.ts`): Strips patient_identity_token, national_id_number, and all PII fields before intelligence processing. Rejects events containing patient identifiers. Enforces zero-trust signature verification on incoming intelligence events.
+- **Intelligence Alerts**: Advisory outputs only — EPIDEMIOLOGY_ALERT, LAB_LOAD_PREDICTION, POLICY_SUGGESTION. Published through notification engine only. No direct UI mutation or clinical decision enforcement. All outputs classified as CLINICAL_SUGGESTION.
+- **Governance Separation**: Knowledge Engine → clinical suggestions, Clinical Pathways → workflow guidance, Governance Brain → policy enforcement, Intelligence Layer → population-level insights only. No duplicate alert generation across engines.
+- **Architecture Guardrails**: Intelligence Layer runs as extension_layer. Core clinical processing remains immutable. Single-lab deployments fully operational without intelligence worker. Intelligence processing never delays RESULT_VERIFIED, WORKLIST rendering, or analyzer ingestion.
+- **API Routes**: `/api/sovereign/intelligence/metrics`, `/api/sovereign/intelligence/alerts`, `/api/sovereign/intelligence/alerts/:id/acknowledge`, `/api/sovereign/intelligence/events/stats`, `/api/sovereign/intelligence/worker-status`.
+
 ### Data Storage
 - **Database**: PostgreSQL.
 - **ORM**: Drizzle ORM with `node-postgres`.
 - **Schema Management**: `drizzle-kit push`.
-- **Key Tables**: `users`, `staff`, `patients`, `testTypes`, `samples`, `testResults`, `auditLogs`, `organizations`, `labs`, `clinicalPathways`, `governanceEvents`, `analyzers`, `localSyncEvents`, `syncConflictPolicy`, `conflictAuditLog`, `facilityConnectivityStatus`, `zeroTrustIdentities`, `securityQuarantineQueue`, `nationalAuditTrail`, and various read model tables.
+- **Key Tables**: `users`, `staff`, `patients`, `testTypes`, `samples`, `testResults`, `auditLogs`, `organizations`, `labs`, `clinicalPathways`, `governanceEvents`, `analyzers`, `localSyncEvents`, `syncConflictPolicy`, `conflictAuditLog`, `facilityConnectivityStatus`, `zeroTrustIdentities`, `securityQuarantineQueue`, `nationalAuditTrail`, `intelligenceEvents`, `anonymizedMetrics`, `intelligenceAlerts`, and various read model tables.
 - **Data Archiving**: Hot vs. cold data architecture for results.
 
 ### Project Structure
-Organized into `client/`, `server/`, and `shared/` directories. The `server/` directory contains modules for authentication, storage, sovereign APIs, clinical engines, workers, read models, and security.
+Organized into `client/`, `server/`, and `shared/` directories. The `server/` directory contains modules for authentication, storage, sovereign APIs, clinical engines, workers, read models, security, and clinical intelligence.
 
 ### Sovereign Pilot API Routes
-A comprehensive set of API endpoints are available under `/api/sovereign/` and `/api/analyzers/` for managing organizational hierarchy, identity tokens, analyzer ingestion, event streaming, offline mode, invoicing, national reports, patient history oversight, policy management, identity verification, clinical pathways, technician workbenches, and various worker statuses and read models.
+A comprehensive set of API endpoints are available under `/api/sovereign/` and `/api/analyzers/` for managing organizational hierarchy, identity tokens, analyzer ingestion, event streaming, offline mode, invoicing, national reports, patient history oversight, policy management, identity verification, clinical pathways, technician workbenches, clinical intelligence metrics and alerts, and various worker statuses and read models.
 
 ## External Dependencies
 

@@ -20,6 +20,7 @@ import { startOfflineSyncWorker, getOfflineSyncWorkerStatus, createOfflineSyncEv
 import { globalEventBudget } from "./globalEventBudget";
 import { issueIdentityToken, rotateIdentityToken, revokeIdentity, validateIdentityToken, startTokenCleanup } from "./zeroTrustTokenService";
 import { blockClientProvidedContext, enforceFacilityIsolation, requireRoleScope, deriveServerExecutionContext, sanitizePatientForRole } from "./zeroTrustAccessControl";
+import { startIntelligenceWorker, getIntelligenceWorkerStatus } from "./intelligenceWorker";
 
 function hashToken(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
@@ -1858,6 +1859,49 @@ export function registerSovereignRoutes(app: Express): void {
     res.status(201).json({ message: "Cross-facility access request logged", reviewFlag: true });
   });
 
+  // === CLINICAL INTELLIGENCE LAYER ===
+
+  app.get("/api/sovereign/intelligence/metrics", requireAuth, requireRoleScope("LAB_ADMIN", "NATIONAL_CLINICAL_SUPERVISOR", "MINISTRY_AUDITOR"), async (req: any, res) => {
+    const { facilityCode, testCode, limit } = req.query;
+    const maxResults = Math.min(parseInt(limit as string) || 100, 500);
+    if (facilityCode) {
+      const metrics = await storage.getAnonymizedMetricsByFacility(facilityCode as string, maxResults);
+      return res.json(metrics);
+    }
+    if (testCode) {
+      const metrics = await storage.getAnonymizedMetricsByTestCode(testCode as string, maxResults);
+      return res.json(metrics);
+    }
+    const metrics = await storage.getRecentAnonymizedMetrics(maxResults);
+    res.json(metrics);
+  });
+
+  app.get("/api/sovereign/intelligence/alerts", requireAuth, requireRoleScope("LAB_ADMIN", "NATIONAL_CLINICAL_SUPERVISOR", "MINISTRY_AUDITOR"), async (req: any, res) => {
+    const { alertType, limit } = req.query;
+    const maxResults = Math.min(parseInt(limit as string) || 100, 500);
+    const alerts = await storage.getIntelligenceAlerts(alertType as string | undefined, maxResults);
+    res.json(alerts);
+  });
+
+  app.post("/api/sovereign/intelligence/alerts/:id/acknowledge", requireAuth, requireRoleScope("LAB_ADMIN", "NATIONAL_CLINICAL_SUPERVISOR", "MINISTRY_AUDITOR"), async (req: any, res) => {
+    const alertId = parseInt(req.params.id);
+    if (isNaN(alertId)) return res.status(400).json({ message: "Invalid alert ID" });
+    const staffMember = req.staffMember || req.user;
+    const updated = await storage.acknowledgeIntelligenceAlert(alertId, staffMember.id);
+    if (!updated) return res.status(404).json({ message: "Alert not found" });
+    res.json(updated);
+  });
+
+  app.get("/api/sovereign/intelligence/events/stats", requireAuth, requireRoleScope("LAB_ADMIN", "NATIONAL_CLINICAL_SUPERVISOR", "MINISTRY_AUDITOR"), async (_req: any, res) => {
+    const stats = await storage.getIntelligenceEventStats();
+    res.json(stats);
+  });
+
+  app.get("/api/sovereign/intelligence/worker-status", requireAuth, requireRoleScope("LAB_ADMIN", "NATIONAL_CLINICAL_SUPERVISOR", "MINISTRY_AUDITOR"), async (_req: any, res) => {
+    const status = getIntelligenceWorkerStatus();
+    res.json(status);
+  });
+
   // === START WORKERS & EVENT SUBSCRIPTIONS ===
 
   startEventWorker();
@@ -1868,4 +1912,5 @@ export function registerSovereignRoutes(app: Express): void {
   startAnalyzerWorker();
   startOfflineSyncWorker();
   startTokenCleanup();
+  startIntelligenceWorker();
 }

@@ -59,6 +59,10 @@ import {
   type ZeroTrustIdentity, type InsertZeroTrustIdentity,
   type SecurityQuarantineEntry, type InsertSecurityQuarantine,
   type NationalAuditTrailEntry, type InsertNationalAuditTrail,
+  intelligenceEvents, anonymizedMetrics, intelligenceAlerts,
+  type IntelligenceEvent, type InsertIntelligenceEvent,
+  type AnonymizedMetric, type InsertAnonymizedMetric,
+  type IntelligenceAlert, type InsertIntelligenceAlert,
 } from "@shared/schema";
 import { eq, desc, and, sql, isNull } from "drizzle-orm";
 import { createHash } from "crypto";
@@ -315,6 +319,26 @@ export interface IStorage {
   createNationalAuditEntry(entry: InsertNationalAuditTrail): Promise<NationalAuditTrailEntry>;
   getNationalAuditTrail(facilityScope?: string, limit?: number): Promise<NationalAuditTrailEntry[]>;
   getNationalAuditByIdentity(identityUuid: string, limit?: number): Promise<NationalAuditTrailEntry[]>;
+
+  // Clinical Intelligence Layer: Intelligence Events
+  createIntelligenceEvent(event: InsertIntelligenceEvent): Promise<IntelligenceEvent>;
+  getPendingIntelligenceEvents(limit?: number): Promise<IntelligenceEvent[]>;
+  markIntelligenceEventStatus(id: number, status: string): Promise<void>;
+  getIntelligenceEventStats(): Promise<{ pending: number; processed: number; rejected: number; failed: number }>;
+
+  // Clinical Intelligence Layer: Anonymized Metrics
+  createAnonymizedMetric(metric: InsertAnonymizedMetric): Promise<AnonymizedMetric>;
+  findAnonymizedMetric(testCode: string, facilityCode: string, timestampBucket: Date, aggregationLevel: string): Promise<AnonymizedMetric | undefined>;
+  incrementAnonymizedMetricCount(metricId: number): Promise<void>;
+  getRecentAnonymizedMetrics(limit?: number): Promise<AnonymizedMetric[]>;
+  getAnonymizedMetricsByFacility(facilityCode: string, limit?: number): Promise<AnonymizedMetric[]>;
+  getAnonymizedMetricsByTestCode(testCode: string, limit?: number): Promise<AnonymizedMetric[]>;
+
+  // Clinical Intelligence Layer: Intelligence Alerts
+  createIntelligenceAlert(alert: InsertIntelligenceAlert): Promise<IntelligenceAlert>;
+  getIntelligenceAlerts(alertType?: string, limit?: number): Promise<IntelligenceAlert[]>;
+  findRecentIntelligenceAlert(alertType: string, facilityCode?: string, withinHours?: number, testCode?: string): Promise<IntelligenceAlert | undefined>;
+  acknowledgeIntelligenceAlert(id: number, acknowledgedBy: number): Promise<IntelligenceAlert | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1824,6 +1848,129 @@ export class DatabaseStorage implements IStorage {
       .where(eq(nationalAuditTrail.identityUuid, identityUuid))
       .orderBy(desc(nationalAuditTrail.createdAt))
       .limit(limit);
+  }
+
+  // === Clinical Intelligence Layer: Intelligence Events ===
+
+  async createIntelligenceEvent(event: InsertIntelligenceEvent): Promise<IntelligenceEvent> {
+    const [created] = await db.insert(intelligenceEvents).values(event).returning();
+    return created;
+  }
+
+  async getPendingIntelligenceEvents(limit: number = 25): Promise<IntelligenceEvent[]> {
+    return await db.select().from(intelligenceEvents)
+      .where(eq(intelligenceEvents.processingStatus, "PENDING"))
+      .orderBy(intelligenceEvents.createdAt)
+      .limit(limit);
+  }
+
+  async markIntelligenceEventStatus(id: number, status: string): Promise<void> {
+    await db.update(intelligenceEvents)
+      .set({ processingStatus: status, processedAt: new Date() })
+      .where(eq(intelligenceEvents.id, id));
+  }
+
+  async getIntelligenceEventStats(): Promise<{ pending: number; processed: number; rejected: number; failed: number }> {
+    const rows = await db.select({
+      status: intelligenceEvents.processingStatus,
+      count: sql<number>`count(*)::int`,
+    }).from(intelligenceEvents).groupBy(intelligenceEvents.processingStatus);
+    const stats = { pending: 0, processed: 0, rejected: 0, failed: 0 };
+    for (const row of rows) {
+      const key = row.status.toLowerCase() as keyof typeof stats;
+      if (key in stats) stats[key] = row.count;
+    }
+    return stats;
+  }
+
+  // === Clinical Intelligence Layer: Anonymized Metrics ===
+
+  async createAnonymizedMetric(metric: InsertAnonymizedMetric): Promise<AnonymizedMetric> {
+    const [created] = await db.insert(anonymizedMetrics).values(metric).returning();
+    return created;
+  }
+
+  async findAnonymizedMetric(testCode: string, facilityCode: string, timestampBucket: Date, aggregationLevel: string): Promise<AnonymizedMetric | undefined> {
+    const [found] = await db.select().from(anonymizedMetrics)
+      .where(and(
+        eq(anonymizedMetrics.testCode, testCode),
+        eq(anonymizedMetrics.facilityCode, facilityCode),
+        eq(anonymizedMetrics.timestampBucket, timestampBucket),
+        eq(anonymizedMetrics.aggregationLevel, aggregationLevel),
+      ))
+      .limit(1);
+    return found;
+  }
+
+  async incrementAnonymizedMetricCount(metricId: number): Promise<void> {
+    await db.update(anonymizedMetrics)
+      .set({ count: sql`${anonymizedMetrics.count} + 1` })
+      .where(eq(anonymizedMetrics.metricId, metricId));
+  }
+
+  async getRecentAnonymizedMetrics(limit: number = 100): Promise<AnonymizedMetric[]> {
+    return await db.select().from(anonymizedMetrics)
+      .orderBy(desc(anonymizedMetrics.createdAt))
+      .limit(limit);
+  }
+
+  async getAnonymizedMetricsByFacility(facilityCode: string, limit: number = 100): Promise<AnonymizedMetric[]> {
+    return await db.select().from(anonymizedMetrics)
+      .where(eq(anonymizedMetrics.facilityCode, facilityCode))
+      .orderBy(desc(anonymizedMetrics.timestampBucket))
+      .limit(limit);
+  }
+
+  async getAnonymizedMetricsByTestCode(testCode: string, limit: number = 100): Promise<AnonymizedMetric[]> {
+    return await db.select().from(anonymizedMetrics)
+      .where(eq(anonymizedMetrics.testCode, testCode))
+      .orderBy(desc(anonymizedMetrics.timestampBucket))
+      .limit(limit);
+  }
+
+  // === Clinical Intelligence Layer: Intelligence Alerts ===
+
+  async createIntelligenceAlert(alert: InsertIntelligenceAlert): Promise<IntelligenceAlert> {
+    const [created] = await db.insert(intelligenceAlerts).values(alert).returning();
+    return created;
+  }
+
+  async getIntelligenceAlerts(alertType?: string, limit: number = 100): Promise<IntelligenceAlert[]> {
+    if (alertType) {
+      return await db.select().from(intelligenceAlerts)
+        .where(eq(intelligenceAlerts.alertType, alertType))
+        .orderBy(desc(intelligenceAlerts.createdAt))
+        .limit(limit);
+    }
+    return await db.select().from(intelligenceAlerts)
+      .orderBy(desc(intelligenceAlerts.createdAt))
+      .limit(limit);
+  }
+
+  async findRecentIntelligenceAlert(alertType: string, facilityCode?: string, withinHours: number = 24, testCode?: string): Promise<IntelligenceAlert | undefined> {
+    const cutoff = new Date(Date.now() - withinHours * 60 * 60 * 1000);
+    const conditions = [
+      eq(intelligenceAlerts.alertType, alertType),
+      sql`${intelligenceAlerts.createdAt} > ${cutoff}`,
+    ];
+    if (facilityCode) {
+      conditions.push(eq(intelligenceAlerts.facilityCode, facilityCode));
+    }
+    if (testCode) {
+      conditions.push(eq(intelligenceAlerts.testCode, testCode));
+    }
+    const [found] = await db.select().from(intelligenceAlerts)
+      .where(and(...conditions))
+      .limit(1);
+    return found;
+  }
+
+  async acknowledgeIntelligenceAlert(id: number, acknowledgedBy: number): Promise<IntelligenceAlert | undefined> {
+    const [updated] = await db.update(intelligenceAlerts)
+      .set({ acknowledged: true, acknowledgedBy, acknowledgedAt: new Date() })
+      .where(eq(intelligenceAlerts.id, id))
+      .returning();
+    return updated;
   }
 }
 

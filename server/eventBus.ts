@@ -109,4 +109,7 @@ export const EventTypes = {
   EVENT_QUARANTINED: "event.quarantined",
   CROSS_FACILITY_ACCESS: "cross.facility.access",
   NATIONAL_AUDIT_LOGGED: "national.audit.logged",
+  INTELLIGENCE_EVENT_CREATED: "intelligence.event.created",
+  INTELLIGENCE_METRIC_AGGREGATED: "intelligence.metric.aggregated",
+  INTELLIGENCE_ALERT_GENERATED: "intelligence.alert.generated",
 } as const;

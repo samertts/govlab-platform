@@ -74,6 +74,16 @@ const DEFAULT_NOTIFICATION_MAP: Record<string, {
       return targets;
     },
   },
+  "intelligence.alert.generated": {
+    type: "INFO",
+    buildMessage: (payload) => {
+      if (!payload) return "";
+      return `[Intelligence Advisory] ${payload.alertType || "ALERT"}: ${payload.title || "New insight available"}`;
+    },
+    targetResolver: async (_event) => {
+      return [];
+    },
+  },
 };
 
 export async function processNotification(event: Event): Promise<void> {
