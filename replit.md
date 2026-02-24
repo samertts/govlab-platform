@@ -34,11 +34,19 @@ GovLab LIS is built with a clear separation of concerns between its frontend and
 - **Read Models**: Pre-computed views for worklists, national metrics, and suggestions.
 - **Clinical Intelligence**: Includes a Clinical Governance Engine and Clinical Pathways Engine for advisory evaluations.
 
+### Disaster-Proof Offline Architecture
+- **Offline Sync Worker** (`server/offlineSyncWorker.ts`): Background service polling `local_sync_events` in batches, applying exponential backoff with UUID dedup, conflict detection, and merge strategy resolution before syncing to national spine.
+- **Global Event Budget** (`server/globalEventBudget.ts`): System-wide event rate limiter using sliding window (500 events/60s) with queue-backpressure (never drops clinical events, never blocks workflows).
+- **Conflict Resolution**: `sync_conflict_policy` table defines per-entity merge strategies (LAST_WRITE_WINS default) with LOCAL_LAB > DIRECTORATE > NATIONAL priority. Verified clinical results are never silently overwritten; conflicts produce REVIEW_REQUIRED entries in `conflict_audit_log`.
+- **Facility Connectivity**: `facility_connectivity_status` tracks online/offline/degraded status per facility with sync latency and pending event counts.
+- **Key Design Rules**: Governance/pathways/intelligence engines execute post-sync only. Sample ownership remains single-facility. Projection stability: max 2 projections per domain. Server-side execution_context only.
+- **API Routes**: `/api/sovereign/offline-sync/*`, `/api/sovereign/event-budget/*`, `/api/sovereign/conflict-policies`, `/api/sovereign/conflict-audit`, `/api/sovereign/facility-connectivity/*`.
+
 ### Data Storage
 - **Database**: PostgreSQL.
 - **ORM**: Drizzle ORM with `node-postgres`.
 - **Schema Management**: `drizzle-kit push`.
-- **Key Tables**: `users`, `staff`, `patients`, `testTypes`, `samples`, `testResults`, `auditLogs`, `organizations`, `labs`, `clinicalPathways`, `governanceEvents`, `analyzers`, and various read model tables.
+- **Key Tables**: `users`, `staff`, `patients`, `testTypes`, `samples`, `testResults`, `auditLogs`, `organizations`, `labs`, `clinicalPathways`, `governanceEvents`, `analyzers`, `localSyncEvents`, `syncConflictPolicy`, `conflictAuditLog`, `facilityConnectivityStatus`, and various read model tables.
 - **Data Archiving**: Hot vs. cold data architecture for results.
 
 ### Project Structure

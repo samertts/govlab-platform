@@ -16,6 +16,8 @@ import { startArchiveWorker, getArchiveWorkerStatus, setupArchiveEventSubscripti
 import { authenticateAnalyzer, validateFacilityCode, ingestMessage, getGatewayStatus } from "./instrumentGateway";
 import { startAnalyzerWorker, getAnalyzerWorkerStatus } from "./analyzerWorkerService";
 import { sessionAnomalyDetector } from "./securityGuardrails";
+import { startOfflineSyncWorker, getOfflineSyncWorkerStatus, createOfflineSyncEvent } from "./offlineSyncWorker";
+import { globalEventBudget } from "./globalEventBudget";
 
 function hashToken(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
@@ -1608,6 +1610,124 @@ export function registerSovereignRoutes(app: Express): void {
     res.json(stats);
   });
 
+  // === OFFLINE SYNC WORKER STATUS ===
+
+  app.get("/api/sovereign/offline-sync/status", requireAuth, requireAdmin, async (_req, res) => {
+    res.json(getOfflineSyncWorkerStatus());
+  });
+
+  app.get("/api/sovereign/offline-sync/stats", requireAuth, requireAdmin, async (_req, res) => {
+    const stats = await storage.getSyncEventStats();
+    res.json(stats);
+  });
+
+  app.get("/api/sovereign/offline-sync/events", requireAuth, requireAdmin, async (req: any, res) => {
+    const facilityCode = req.query.facilityCode as string | undefined;
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    if (facilityCode) {
+      const events = await storage.getSyncEventsByFacility(facilityCode, limit);
+      return res.json(events);
+    }
+    const events = await storage.getPendingSyncEvents(limit);
+    res.json(events);
+  });
+
+  app.post("/api/sovereign/offline-sync/events", requireAuth, async (req: any, res) => {
+    const { eventType, facilityCode, payload, advisoryOriginFlag, sourceType } = req.body;
+    if (!eventType || typeof eventType !== "string") {
+      return res.status(400).json({ message: "eventType string is required" });
+    }
+    if (!facilityCode || typeof facilityCode !== "string") {
+      return res.status(400).json({ message: "facilityCode string is required" });
+    }
+    if (!payload || typeof payload !== "object") {
+      return res.status(400).json({ message: "payload object is required" });
+    }
+    createOfflineSyncEvent(eventType, facilityCode, payload, req, advisoryOriginFlag, sourceType);
+    res.status(202).json({ message: "Sync event queued" });
+  });
+
+  // === GLOBAL EVENT BUDGET ===
+
+  app.get("/api/sovereign/event-budget/status", requireAuth, requireAdmin, async (_req, res) => {
+    res.json(globalEventBudget.getStatus());
+  });
+
+  // === SYNC CONFLICT POLICIES ===
+
+  app.get("/api/sovereign/conflict-policies", requireAuth, requireAdmin, async (_req, res) => {
+    const policies = await storage.getSyncConflictPolicies(true);
+    res.json(policies);
+  });
+
+  app.post("/api/sovereign/conflict-policies", requireAuth, requireAdmin, async (req: any, res) => {
+    const { entityType, priorityOrder, mergeStrategy, retentionDays } = req.body;
+    if (!entityType || !priorityOrder || !mergeStrategy) {
+      return res.status(400).json({ message: "entityType, priorityOrder, and mergeStrategy are required" });
+    }
+    const policy = await storage.createSyncConflictPolicy({
+      entityType,
+      priorityOrder,
+      mergeStrategy,
+      retentionDays: retentionDays || 365,
+      activeFlag: true,
+    });
+    res.status(201).json(policy);
+  });
+
+  app.patch("/api/sovereign/conflict-policies/:id", requireAuth, requireAdmin, async (req: any, res) => {
+    const id = Number(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid policy ID" });
+    const { activeFlag } = req.body;
+    if (typeof activeFlag !== "boolean") return res.status(400).json({ message: "activeFlag boolean required" });
+    const updated = await storage.updateSyncConflictPolicyActive(id, activeFlag);
+    if (!updated) return res.status(404).json({ message: "Policy not found" });
+    res.json(updated);
+  });
+
+  // === CONFLICT AUDIT LOG ===
+
+  app.get("/api/sovereign/conflict-audit", requireAuth, requireAdmin, async (req: any, res) => {
+    const facilityCode = req.query.facilityCode as string | undefined;
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const logs = await storage.getConflictAuditLogs(facilityCode, limit);
+    res.json(logs);
+  });
+
+  app.patch("/api/sovereign/conflict-audit/:id/resolve", requireAuth, requireAdmin, async (req: any, res) => {
+    const id = Number(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid audit log ID" });
+    const userId = req.user?.id || null;
+    const resolved = await storage.updateConflictResolution(id, userId);
+    if (!resolved) return res.status(404).json({ message: "Conflict audit entry not found" });
+    res.json(resolved);
+  });
+
+  // === FACILITY CONNECTIVITY STATUS ===
+
+  app.get("/api/sovereign/facility-connectivity", requireAuth, requireAdmin, async (_req, res) => {
+    const statuses = await storage.getAllFacilityConnectivityStatuses();
+    res.json(statuses);
+  });
+
+  app.get("/api/sovereign/facility-connectivity/:facilityCode", requireAuth, async (req: any, res) => {
+    const status = await storage.getFacilityConnectivityStatus(req.params.facilityCode);
+    if (!status) return res.status(404).json({ message: "Facility not found" });
+    res.json(status);
+  });
+
+  app.post("/api/sovereign/facility-connectivity/:facilityCode/heartbeat", requireAuth, async (req: any, res) => {
+    const facilityCode = req.params.facilityCode;
+    const updated = await storage.upsertFacilityConnectivityStatus({
+      facilityCode,
+      lastSyncAt: new Date(),
+      onlineStatus: "ONLINE",
+      syncLatencyMs: 0,
+      pendingEventCount: 0,
+    });
+    res.json(updated);
+  });
+
   // === START WORKERS & EVENT SUBSCRIPTIONS ===
 
   startEventWorker();
@@ -1616,4 +1736,5 @@ export function registerSovereignRoutes(app: Express): void {
   setupArchiveEventSubscription();
   startArchiveWorker();
   startAnalyzerWorker();
+  startOfflineSyncWorker();
 }

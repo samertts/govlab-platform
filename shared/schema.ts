@@ -567,6 +567,67 @@ export const securityEvents = pgTable("security_events", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// === DISASTER-PROOF OFFLINE ARCHITECTURE: LOCAL SYNC EVENTS ===
+
+export const localSyncEvents = pgTable("local_sync_events", {
+  id: serial("id").primaryKey(),
+  eventUuid: varchar("event_uuid", { length: 64 }).notNull().unique(),
+  eventType: varchar("event_type", { length: 100 }).notNull(),
+  facilityCode: varchar("facility_code", { length: 100 }).notNull(),
+  payload: jsonb("payload"),
+  executionContext: varchar("execution_context", { length: 50 }),
+  syncStatus: varchar("sync_status", { length: 20 }).notNull().default("PENDING"),
+  retryCount: integer("retry_count").notNull().default(0),
+  lastAttemptAt: timestamp("last_attempt_at"),
+  errorDetail: text("error_detail"),
+  advisoryOriginFlag: boolean("advisory_origin_flag").default(false),
+  sourceType: varchar("source_type", { length: 30 }),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// === DISASTER-PROOF OFFLINE ARCHITECTURE: SYNC CONFLICT POLICY ===
+
+export const syncConflictPolicy = pgTable("sync_conflict_policy", {
+  id: serial("id").primaryKey(),
+  entityType: varchar("entity_type", { length: 100 }).notNull(),
+  priorityOrder: varchar("priority_order", { length: 200 }).notNull().default("LOCAL_LAB,DIRECTORATE,NATIONAL"),
+  mergeStrategy: varchar("merge_strategy", { length: 50 }).notNull().default("LAST_WRITE_WINS"),
+  activeFlag: boolean("active_flag").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// === DISASTER-PROOF OFFLINE ARCHITECTURE: CONFLICT AUDIT LOG ===
+
+export const conflictAuditLog = pgTable("conflict_audit_log", {
+  id: serial("id").primaryKey(),
+  syncEventId: integer("sync_event_id").references(() => localSyncEvents.id),
+  entityType: varchar("entity_type", { length: 100 }).notNull(),
+  entityId: integer("entity_id"),
+  facilityCode: varchar("facility_code", { length: 100 }).notNull(),
+  localVersion: jsonb("local_version"),
+  remoteVersion: jsonb("remote_version"),
+  resolutionStatus: varchar("resolution_status", { length: 30 }).notNull().default("REVIEW_REQUIRED"),
+  resolvedBy: integer("resolved_by").references(() => staff.id),
+  resolvedAt: timestamp("resolved_at"),
+  mergeStrategyApplied: varchar("merge_strategy_applied", { length: 50 }),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// === DISASTER-PROOF OFFLINE ARCHITECTURE: FACILITY CONNECTIVITY STATUS ===
+
+export const facilityConnectivityStatus = pgTable("facility_connectivity_status", {
+  id: serial("id").primaryKey(),
+  facilityCode: varchar("facility_code", { length: 100 }).notNull().unique(),
+  lastSyncAt: timestamp("last_sync_at"),
+  onlineStatus: varchar("online_status", { length: 20 }).notNull().default("UNKNOWN"),
+  syncLatencyMs: integer("sync_latency_ms"),
+  pendingEventCount: integer("pending_event_count").default(0),
+  lastErrorAt: timestamp("last_error_at"),
+  metadata: jsonb("metadata"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // === RELATIONS ===
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
@@ -722,6 +783,10 @@ export const insertAnalyzerEventQueueSchema = createInsertSchema(analyzerEventQu
 export const insertResultsHotSchema = createInsertSchema(resultsHot).omit({ id: true, createdAt: true });
 export const insertResultsArchiveSchema = createInsertSchema(resultsArchive).omit({ id: true, archivedAt: true });
 export const insertPatientHistorySummarySchema = createInsertSchema(patientHistorySummary).omit({ id: true, updatedAt: true });
+export const insertLocalSyncEventSchema = createInsertSchema(localSyncEvents).omit({ id: true, createdAt: true });
+export const insertSyncConflictPolicySchema = createInsertSchema(syncConflictPolicy).omit({ id: true, createdAt: true });
+export const insertConflictAuditLogSchema = createInsertSchema(conflictAuditLog).omit({ id: true, createdAt: true });
+export const insertFacilityConnectivityStatusSchema = createInsertSchema(facilityConnectivityStatus).omit({ id: true, updatedAt: true });
 
 // === EXPLICIT API CONTRACT TYPES ===
 
@@ -763,6 +828,10 @@ export type AnalyzerEventQueueEntry = typeof analyzerEventQueue.$inferSelect;
 export type ResultHot = typeof resultsHot.$inferSelect;
 export type ResultArchive = typeof resultsArchive.$inferSelect;
 export type PatientHistorySummaryEntry = typeof patientHistorySummary.$inferSelect;
+export type LocalSyncEvent = typeof localSyncEvents.$inferSelect;
+export type SyncConflictPolicyEntry = typeof syncConflictPolicy.$inferSelect;
+export type ConflictAuditLogEntry = typeof conflictAuditLog.$inferSelect;
+export type FacilityConnectivityStatusEntry = typeof facilityConnectivityStatus.$inferSelect;
 
 export type InsertLab = z.infer<typeof insertLabSchema>;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
@@ -802,6 +871,10 @@ export type InsertAnalyzerEventQueue = z.infer<typeof insertAnalyzerEventQueueSc
 export type InsertResultHot = z.infer<typeof insertResultsHotSchema>;
 export type InsertResultArchive = z.infer<typeof insertResultsArchiveSchema>;
 export type InsertPatientHistorySummary = z.infer<typeof insertPatientHistorySummarySchema>;
+export type InsertLocalSyncEvent = z.infer<typeof insertLocalSyncEventSchema>;
+export type InsertSyncConflictPolicy = z.infer<typeof insertSyncConflictPolicySchema>;
+export type InsertConflictAuditLog = z.infer<typeof insertConflictAuditLogSchema>;
+export type InsertFacilityConnectivityStatus = z.infer<typeof insertFacilityConnectivityStatusSchema>;
 
 // Request types
 export type CreatePatientRequest = InsertPatient;

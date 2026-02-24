@@ -50,6 +50,11 @@ import {
   analyzers, analyzerEventQueue,
   type Analyzer, type InsertAnalyzer,
   type AnalyzerEventQueueEntry, type InsertAnalyzerEventQueue,
+  localSyncEvents, syncConflictPolicy, conflictAuditLog, facilityConnectivityStatus,
+  type LocalSyncEvent, type InsertLocalSyncEvent,
+  type SyncConflictPolicyEntry, type InsertSyncConflictPolicy,
+  type ConflictAuditLogEntry, type InsertConflictAuditLog,
+  type FacilityConnectivityStatusEntry, type InsertFacilityConnectivityStatus,
 } from "@shared/schema";
 import { eq, desc, and, sql, isNull } from "drizzle-orm";
 import { createHash } from "crypto";
@@ -262,6 +267,31 @@ export interface IStorage {
   getGovernanceJobsByEventId(eventId: number): Promise<GovernanceJob[]>;
   getGovernanceJobStats(): Promise<{ pending: number; processing: number; completed: number; failed: number }>;
   findDuplicateGovernanceJob(eventId: number, jobType: string): Promise<GovernanceJob | undefined>;
+
+  // Disaster-Proof Offline Architecture: Local Sync Events
+  createLocalSyncEvent(event: InsertLocalSyncEvent): Promise<LocalSyncEvent>;
+  getPendingSyncEvents(limit?: number): Promise<LocalSyncEvent[]>;
+  getSyncEventsByFacility(facilityCode: string, limit?: number): Promise<LocalSyncEvent[]>;
+  getSyncEventByUuid(eventUuid: string): Promise<LocalSyncEvent | undefined>;
+  updateSyncEventStatus(id: number, syncStatus: string, errorDetail?: string): Promise<LocalSyncEvent | undefined>;
+  incrementSyncEventRetry(id: number): Promise<LocalSyncEvent | undefined>;
+  getSyncEventStats(): Promise<{ pending: number; synced: number; failed: number; conflicted: number }>;
+
+  // Disaster-Proof Offline Architecture: Sync Conflict Policy
+  createSyncConflictPolicy(policy: InsertSyncConflictPolicy): Promise<SyncConflictPolicyEntry>;
+  getSyncConflictPolicies(activeOnly?: boolean): Promise<SyncConflictPolicyEntry[]>;
+  getSyncConflictPolicyByEntity(entityType: string): Promise<SyncConflictPolicyEntry | undefined>;
+  updateSyncConflictPolicyActive(id: number, activeFlag: boolean): Promise<SyncConflictPolicyEntry | undefined>;
+
+  // Disaster-Proof Offline Architecture: Conflict Audit Log
+  createConflictAuditLog(entry: InsertConflictAuditLog): Promise<ConflictAuditLogEntry>;
+  getConflictAuditLogs(facilityCode?: string, limit?: number): Promise<ConflictAuditLogEntry[]>;
+  updateConflictResolution(id: number, resolvedBy: number): Promise<ConflictAuditLogEntry | undefined>;
+
+  // Disaster-Proof Offline Architecture: Facility Connectivity Status
+  upsertFacilityConnectivityStatus(entry: InsertFacilityConnectivityStatus): Promise<FacilityConnectivityStatusEntry>;
+  getFacilityConnectivityStatus(facilityCode: string): Promise<FacilityConnectivityStatusEntry | undefined>;
+  getAllFacilityConnectivityStatuses(): Promise<FacilityConnectivityStatusEntry[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1516,6 +1546,152 @@ export class DatabaseStorage implements IStorage {
       if (key in stats) stats[key] = row.count;
     }
     return stats;
+  }
+
+  // === Disaster-Proof Offline Architecture: Local Sync Events ===
+
+  async createLocalSyncEvent(event: InsertLocalSyncEvent): Promise<LocalSyncEvent> {
+    const [created] = await db.insert(localSyncEvents).values(event).returning();
+    return created;
+  }
+
+  async getPendingSyncEvents(limit: number = 50): Promise<LocalSyncEvent[]> {
+    return await db.select().from(localSyncEvents)
+      .where(eq(localSyncEvents.syncStatus, "PENDING"))
+      .orderBy(localSyncEvents.createdAt)
+      .limit(limit);
+  }
+
+  async getSyncEventsByFacility(facilityCode: string, limit: number = 100): Promise<LocalSyncEvent[]> {
+    return await db.select().from(localSyncEvents)
+      .where(eq(localSyncEvents.facilityCode, facilityCode))
+      .orderBy(desc(localSyncEvents.createdAt))
+      .limit(limit);
+  }
+
+  async getSyncEventByUuid(eventUuid: string): Promise<LocalSyncEvent | undefined> {
+    const [found] = await db.select().from(localSyncEvents)
+      .where(eq(localSyncEvents.eventUuid, eventUuid))
+      .limit(1);
+    return found;
+  }
+
+  async updateSyncEventStatus(id: number, syncStatus: string, errorDetail?: string): Promise<LocalSyncEvent | undefined> {
+    const setValues: any = { syncStatus, lastAttemptAt: new Date() };
+    if (errorDetail !== undefined) setValues.errorDetail = errorDetail;
+    const [updated] = await db.update(localSyncEvents)
+      .set(setValues)
+      .where(eq(localSyncEvents.id, id))
+      .returning();
+    return updated;
+  }
+
+  async incrementSyncEventRetry(id: number): Promise<LocalSyncEvent | undefined> {
+    const [updated] = await db.update(localSyncEvents)
+      .set({ retryCount: sql`${localSyncEvents.retryCount} + 1`, lastAttemptAt: new Date() })
+      .where(eq(localSyncEvents.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getSyncEventStats(): Promise<{ pending: number; synced: number; failed: number; conflicted: number }> {
+    const result = await db.select({
+      status: localSyncEvents.syncStatus,
+      count: sql<number>`count(*)::int`,
+    }).from(localSyncEvents).groupBy(localSyncEvents.syncStatus);
+    const stats = { pending: 0, synced: 0, failed: 0, conflicted: 0 };
+    for (const row of result) {
+      const key = row.status.toLowerCase() as keyof typeof stats;
+      if (key in stats) stats[key] = row.count;
+    }
+    return stats;
+  }
+
+  // === Disaster-Proof Offline Architecture: Sync Conflict Policy ===
+
+  async createSyncConflictPolicy(policy: InsertSyncConflictPolicy): Promise<SyncConflictPolicyEntry> {
+    const [created] = await db.insert(syncConflictPolicy).values(policy).returning();
+    return created;
+  }
+
+  async getSyncConflictPolicies(activeOnly?: boolean): Promise<SyncConflictPolicyEntry[]> {
+    if (activeOnly) {
+      return await db.select().from(syncConflictPolicy)
+        .where(eq(syncConflictPolicy.activeFlag, true))
+        .orderBy(syncConflictPolicy.entityType);
+    }
+    return await db.select().from(syncConflictPolicy).orderBy(syncConflictPolicy.entityType);
+  }
+
+  async getSyncConflictPolicyByEntity(entityType: string): Promise<SyncConflictPolicyEntry | undefined> {
+    const [found] = await db.select().from(syncConflictPolicy)
+      .where(and(eq(syncConflictPolicy.entityType, entityType), eq(syncConflictPolicy.activeFlag, true)))
+      .limit(1);
+    return found;
+  }
+
+  async updateSyncConflictPolicyActive(id: number, activeFlag: boolean): Promise<SyncConflictPolicyEntry | undefined> {
+    const [updated] = await db.update(syncConflictPolicy)
+      .set({ activeFlag })
+      .where(eq(syncConflictPolicy.id, id))
+      .returning();
+    return updated;
+  }
+
+  // === Disaster-Proof Offline Architecture: Conflict Audit Log ===
+
+  async createConflictAuditLog(entry: InsertConflictAuditLog): Promise<ConflictAuditLogEntry> {
+    const [created] = await db.insert(conflictAuditLog).values(entry).returning();
+    return created;
+  }
+
+  async getConflictAuditLogs(facilityCode?: string, limit: number = 100): Promise<ConflictAuditLogEntry[]> {
+    if (facilityCode) {
+      return await db.select().from(conflictAuditLog)
+        .where(eq(conflictAuditLog.facilityCode, facilityCode))
+        .orderBy(desc(conflictAuditLog.createdAt))
+        .limit(limit);
+    }
+    return await db.select().from(conflictAuditLog)
+      .orderBy(desc(conflictAuditLog.createdAt))
+      .limit(limit);
+  }
+
+  async updateConflictResolution(id: number, resolvedBy: number): Promise<ConflictAuditLogEntry | undefined> {
+    const [updated] = await db.update(conflictAuditLog)
+      .set({ resolutionStatus: "RESOLVED", resolvedBy, resolvedAt: new Date() })
+      .where(eq(conflictAuditLog.id, id))
+      .returning();
+    return updated;
+  }
+
+  // === Disaster-Proof Offline Architecture: Facility Connectivity Status ===
+
+  async upsertFacilityConnectivityStatus(entry: InsertFacilityConnectivityStatus): Promise<FacilityConnectivityStatusEntry> {
+    const [existing] = await db.select().from(facilityConnectivityStatus)
+      .where(eq(facilityConnectivityStatus.facilityCode, entry.facilityCode))
+      .limit(1);
+    if (existing) {
+      const [updated] = await db.update(facilityConnectivityStatus)
+        .set({ ...entry, updatedAt: new Date() })
+        .where(eq(facilityConnectivityStatus.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(facilityConnectivityStatus).values(entry).returning();
+    return created;
+  }
+
+  async getFacilityConnectivityStatus(facilityCode: string): Promise<FacilityConnectivityStatusEntry | undefined> {
+    const [found] = await db.select().from(facilityConnectivityStatus)
+      .where(eq(facilityConnectivityStatus.facilityCode, facilityCode))
+      .limit(1);
+    return found;
+  }
+
+  async getAllFacilityConnectivityStatuses(): Promise<FacilityConnectivityStatusEntry[]> {
+    return await db.select().from(facilityConnectivityStatus)
+      .orderBy(desc(facilityConnectivityStatus.updatedAt));
   }
 }
 

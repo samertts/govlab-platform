@@ -78,4 +78,10 @@ export const EventTypes = {
   ANALYZER_RESULT_RECEIVED: "analyzer.result.received",
   ANALYZER_RESULT_PROCESSED: "analyzer.result.processed",
   ANALYZER_RESULT_FAILED: "analyzer.result.failed",
+  SYNC_EVENT_CREATED: "sync.event.created",
+  SYNC_COMPLETED: "sync.completed",
+  SYNC_CONFLICT_DETECTED: "sync.conflict.detected",
+  SYNC_FAILED: "sync.failed",
+  GLOBAL_BUDGET_WARNING: "global.budget.warning",
+  FACILITY_CONNECTIVITY_CHANGED: "facility.connectivity.changed",
 } as const;
