@@ -892,6 +892,66 @@ export const insertIntelligenceEventSchema = createInsertSchema(intelligenceEven
 export const insertAnonymizedMetricSchema = createInsertSchema(anonymizedMetrics).omit({ metricId: true, createdAt: true });
 export const insertIntelligenceAlertSchema = createInsertSchema(intelligenceAlerts).omit({ id: true, createdAt: true, acknowledgedAt: true });
 
+// === NATIONAL MASTER DATA MODEL ===
+
+export const nationalTests = pgTable("national_tests", {
+  id: serial("id").primaryKey(),
+  loincCode: varchar("loinc_code", { length: 50 }).notNull().unique(),
+  testNameAr: text("test_name_ar").notNull(),
+  testNameEn: text("test_name_en").notNull(),
+  analyzerType: varchar("analyzer_type", { length: 100 }),
+  unitStandard: varchar("unit_standard", { length: 50 }),
+  versionCode: varchar("version_code", { length: 30 }).notNull().default("1.0.0"),
+  status: varchar("status", { length: 20 }).notNull().default("ACTIVE"),
+  signatureField: text("signature_field"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const nationalAnalyzers = pgTable("national_analyzers", {
+  id: serial("id").primaryKey(),
+  manufacturer: varchar("manufacturer", { length: 200 }).notNull(),
+  model: varchar("model", { length: 200 }).notNull(),
+  supportedTests: text("supported_tests").array(),
+  versionCode: varchar("version_code", { length: 30 }).notNull().default("1.0.0"),
+  status: varchar("status", { length: 20 }).notNull().default("ACTIVE"),
+  signatureField: text("signature_field"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const nationalRoles = pgTable("national_roles", {
+  id: serial("id").primaryKey(),
+  roleCode: varchar("role_code", { length: 50 }).notNull().unique(),
+  permissionsScope: jsonb("permissions_scope").notNull(),
+  versionCode: varchar("version_code", { length: 30 }).notNull().default("1.0.0"),
+  status: varchar("status", { length: 20 }).notNull().default("ACTIVE"),
+  signatureField: text("signature_field"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const nationalFacilities = pgTable("national_facilities", {
+  id: serial("id").primaryKey(),
+  facilityCode: varchar("facility_code", { length: 100 }).notNull().unique(),
+  sector: varchar("sector", { length: 30 }).notNull().default("GOVERNMENT"),
+  governorate: varchar("governorate", { length: 200 }),
+  level: varchar("level", { length: 30 }).notNull().default("LAB"),
+  status: varchar("status", { length: 20 }).notNull().default("ACTIVE"),
+  signatureField: text("signature_field"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertNationalTestSchema = createInsertSchema(nationalTests).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertNationalAnalyzerSchema = createInsertSchema(nationalAnalyzers).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertNationalRoleSchema = createInsertSchema(nationalRoles).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertNationalFacilitySchema = createInsertSchema(nationalFacilities).omit({ id: true, createdAt: true, updatedAt: true });
+
 // === EXPLICIT API CONTRACT TYPES ===
 
 export type Policy = typeof policyEngine.$inferSelect;
@@ -942,6 +1002,10 @@ export type FacilityConnectivityStatusEntry = typeof facilityConnectivityStatus.
 export type IntelligenceEvent = typeof intelligenceEvents.$inferSelect;
 export type AnonymizedMetric = typeof anonymizedMetrics.$inferSelect;
 export type IntelligenceAlert = typeof intelligenceAlerts.$inferSelect;
+export type NationalTest = typeof nationalTests.$inferSelect;
+export type NationalAnalyzer = typeof nationalAnalyzers.$inferSelect;
+export type NationalRole = typeof nationalRoles.$inferSelect;
+export type NationalFacility = typeof nationalFacilities.$inferSelect;
 
 export type InsertLab = z.infer<typeof insertLabSchema>;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
@@ -991,6 +1055,10 @@ export type InsertFacilityConnectivityStatus = z.infer<typeof insertFacilityConn
 export type InsertIntelligenceEvent = z.infer<typeof insertIntelligenceEventSchema>;
 export type InsertAnonymizedMetric = z.infer<typeof insertAnonymizedMetricSchema>;
 export type InsertIntelligenceAlert = z.infer<typeof insertIntelligenceAlertSchema>;
+export type InsertNationalTest = z.infer<typeof insertNationalTestSchema>;
+export type InsertNationalAnalyzer = z.infer<typeof insertNationalAnalyzerSchema>;
+export type InsertNationalRole = z.infer<typeof insertNationalRoleSchema>;
+export type InsertNationalFacility = z.infer<typeof insertNationalFacilitySchema>;
 
 // Request types
 export type CreatePatientRequest = InsertPatient;

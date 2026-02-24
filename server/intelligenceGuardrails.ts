@@ -1,5 +1,3 @@
-import { verifyEventSignature } from "./eventSigningService";
-
 const PATIENT_IDENTIFIER_FIELDS = [
   "patientId", "patient_id",
   "nationalId", "national_id", "nationalIdNumber", "national_id_number",
@@ -58,23 +56,6 @@ export function containsPatientIdentifiers(payload: any): boolean {
     }
   }
   return false;
-}
-
-export function verifyIntelligenceEventSignature(event: any): { valid: boolean; reason?: string } {
-  const payload = event.payload;
-  if (!payload) return { valid: true, reason: "NO_PAYLOAD" };
-
-  if (payload.signatureHash) {
-    return verifyEventSignature({
-      eventType: event.eventType || event.sourceEventType,
-      payload,
-      signatureHash: payload.signatureHash,
-      issuerIdentity: payload.issuerIdentity,
-      issuedAt: payload.issuedAt,
-    });
-  }
-
-  return { valid: true };
 }
 
 export function buildAnonymizedPayload(eventType: string, payload: any): {

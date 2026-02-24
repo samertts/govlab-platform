@@ -3,7 +3,6 @@ import { eventBus, EventTypes } from "./eventBus";
 import {
   isIntelligenceSourceEvent,
   buildAnonymizedPayload,
-  verifyIntelligenceEventSignature,
   containsPatientIdentifiers,
 } from "./intelligenceGuardrails";
 import { processNotification } from "./notificationEngine";
@@ -68,11 +67,6 @@ async function handlePostCommitEvent(event: any): Promise<void> {
 
     const payload = event.payload || {};
 
-    const sigResult = verifyIntelligenceEventSignature(event);
-    if (!sigResult.valid && sigResult.reason !== "NO_PAYLOAD") {
-      return;
-    }
-
     const { anonymizedPayload, testCode, facilityCode, sector } = buildAnonymizedPayload(eventType, payload);
 
     if (containsPatientIdentifiers(anonymizedPayload)) {
@@ -111,13 +105,6 @@ async function processIntelligenceBatch(): Promise<void> {
 
 async function processIntelligenceEvent(event: any): Promise<void> {
   try {
-    const sigResult = verifyIntelligenceEventSignature(event);
-    if (!sigResult.valid && sigResult.reason !== "NO_PAYLOAD") {
-      await storage.markIntelligenceEventStatus(event.id, "REJECTED");
-      failedCount++;
-      return;
-    }
-
     const payload = event.anonymizedPayload as Record<string, any> || {};
 
     if (containsPatientIdentifiers(payload)) {

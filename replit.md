@@ -62,18 +62,26 @@ GovLab LIS is built with a clear separation of concerns between its frontend and
 - **Architecture Guardrails**: Intelligence Layer runs as extension_layer. Core clinical processing remains immutable. Single-lab deployments fully operational without intelligence worker. Intelligence processing never delays RESULT_VERIFIED, WORKLIST rendering, or analyzer ingestion.
 - **API Routes**: `/api/sovereign/intelligence/metrics`, `/api/sovereign/intelligence/alerts`, `/api/sovereign/intelligence/alerts/:id/acknowledge`, `/api/sovereign/intelligence/events/stats`, `/api/sovereign/intelligence/worker-status`.
 
+### National Master Data Model
+- **National Tests** (`national_tests`): LOINC-aligned master test catalog with `loinc_code` as immutable identifier. Status: ACTIVE/DEPRECATED/DRAFT. Versioned for backward compatibility with archived results. Signature-ready fields for future sovereign digital trust.
+- **National Analyzers** (`national_analyzers`): Governance-controlled analyzer definitions with `supported_tests` referencing national_tests.loinc_code. Validated during instrument streaming gateway ingestion.
+- **National Roles** (`national_roles`): Aligned with Zero-Trust role model. Local role expansion allowed as extensions only, never overrides. `permissions_scope` defines allowed operations per role.
+- **National Facilities** (`national_facilities`): Multi-governorate facility hierarchy. sector=GOVERNMENT/PRIVATE/NATIONAL, level=LAB/DIRECTORATE/NATIONAL_SPINE.
+- **Governance Rules**: Labs cannot modify master tables directly. All updates originate from governance-authorized channels only. Changes versioned — never destructive. MASTER_DATA_UPDATED events emitted for async propagation.
+- **API Routes**: `/api/sovereign/master/tests/*`, `/api/sovereign/master/analyzers/*`, `/api/sovereign/master/roles/*`, `/api/sovereign/master/facilities/*`.
+
 ### Data Storage
 - **Database**: PostgreSQL.
 - **ORM**: Drizzle ORM with `node-postgres`.
 - **Schema Management**: `drizzle-kit push`.
-- **Key Tables**: `users`, `staff`, `patients`, `testTypes`, `samples`, `testResults`, `auditLogs`, `organizations`, `labs`, `clinicalPathways`, `governanceEvents`, `analyzers`, `localSyncEvents`, `syncConflictPolicy`, `conflictAuditLog`, `facilityConnectivityStatus`, `zeroTrustIdentities`, `securityQuarantineQueue`, `nationalAuditTrail`, `intelligenceEvents`, `anonymizedMetrics`, `intelligenceAlerts`, and various read model tables.
+- **Key Tables**: `users`, `staff`, `patients`, `testTypes`, `samples`, `testResults`, `auditLogs`, `organizations`, `labs`, `clinicalPathways`, `governanceEvents`, `analyzers`, `localSyncEvents`, `syncConflictPolicy`, `conflictAuditLog`, `facilityConnectivityStatus`, `zeroTrustIdentities`, `securityQuarantineQueue`, `nationalAuditTrail`, `intelligenceEvents`, `anonymizedMetrics`, `intelligenceAlerts`, `nationalTests`, `nationalAnalyzers`, `nationalRoles`, `nationalFacilities`, and various read model tables.
 - **Data Archiving**: Hot vs. cold data architecture for results.
 
 ### Project Structure
-Organized into `client/`, `server/`, and `shared/` directories. The `server/` directory contains modules for authentication, storage, sovereign APIs, clinical engines, workers, read models, security, and clinical intelligence.
+Organized into `client/`, `server/`, and `shared/` directories. The `server/` directory contains modules for authentication, storage, sovereign APIs, clinical engines, workers, read models, security, clinical intelligence, and national master data.
 
 ### Sovereign Pilot API Routes
-A comprehensive set of API endpoints are available under `/api/sovereign/` and `/api/analyzers/` for managing organizational hierarchy, identity tokens, analyzer ingestion, event streaming, offline mode, invoicing, national reports, patient history oversight, policy management, identity verification, clinical pathways, technician workbenches, clinical intelligence metrics and alerts, and various worker statuses and read models.
+A comprehensive set of API endpoints are available under `/api/sovereign/` and `/api/analyzers/` for managing organizational hierarchy, identity tokens, analyzer ingestion, event streaming, offline mode, invoicing, national reports, patient history oversight, policy management, identity verification, clinical pathways, technician workbenches, clinical intelligence metrics and alerts, national master data management, and various worker statuses and read models.
 
 ## External Dependencies
 

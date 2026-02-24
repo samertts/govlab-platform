@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createHash, randomBytes } from "crypto";
 import { isAuthenticated } from "./replit_integrations/auth";
 import type { Staff } from "@shared/schema";
+import { insertNationalTestSchema, insertNationalAnalyzerSchema, insertNationalRoleSchema, insertNationalFacilitySchema } from "@shared/schema";
 import { attachTenantScope, attachTokenTenantScope, getTenantLabFilter, enforceTenantOwnership, resolveExecutionContext } from "./tenantScope";
 import { encryptNationalId, decryptNationalId, hashNationalId } from "./nationalIdEncryption";
 import { processIdentityVerification, setupIdentityVerificationListener } from "./identityVerificationGateway";
@@ -1857,6 +1858,143 @@ export function registerSovereignRoutes(app: Express): void {
     });
 
     res.status(201).json({ message: "Cross-facility access request logged", reviewFlag: true });
+  });
+
+  // === NATIONAL MASTER DATA MODEL ===
+
+  app.get("/api/sovereign/master/tests", requireAuth, async (_req: any, res) => {
+    const { status } = _req.query;
+    const tests = await storage.getNationalTests(status as string | undefined);
+    res.json(tests);
+  });
+
+  app.get("/api/sovereign/master/tests/:loincCode", requireAuth, async (req: any, res) => {
+    const test = await storage.getNationalTestByLoinc(req.params.loincCode);
+    if (!test) return res.status(404).json({ message: "National test not found" });
+    res.json(test);
+  });
+
+  app.post("/api/sovereign/master/tests", requireAuth, requireRoleScope("NATIONAL_CLINICAL_SUPERVISOR", "MINISTRY_AUDITOR"), async (req: any, res) => {
+    const parsed = insertNationalTestSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Validation failed", errors: parsed.error.flatten() });
+    const input = parsed.data;
+    const existing = await storage.getNationalTestByLoinc(input.loincCode);
+    if (existing) return res.status(409).json({ message: "National test with this LOINC code already exists" });
+    const created = await storage.createNationalTest(input);
+    await eventBus.emitAndPersist({ eventType: EventTypes.MASTER_DATA_UPDATED, entityType: "national_test", payload: { entityType: "national_tests", action: "CREATED", loincCode: input.loincCode }, emittedBy: (req.staffMember || req.user)?.id, labId: null });
+    res.status(201).json(created);
+  });
+
+  app.patch("/api/sovereign/master/tests/:id", requireAuth, requireRoleScope("NATIONAL_CLINICAL_SUPERVISOR", "MINISTRY_AUDITOR"), async (req: any, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const parsed = insertNationalTestSchema.partial().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Validation failed", errors: parsed.error.flatten() });
+    const updated = await storage.updateNationalTest(id, parsed.data);
+    if (!updated) return res.status(404).json({ message: "National test not found" });
+    await eventBus.emitAndPersist({ eventType: EventTypes.MASTER_DATA_UPDATED, entityType: "national_test", payload: { entityType: "national_tests", action: "UPDATED", id, versionCode: updated.versionCode }, emittedBy: (req.staffMember || req.user)?.id, labId: null });
+    res.json(updated);
+  });
+
+  app.get("/api/sovereign/master/analyzers", requireAuth, async (req: any, res) => {
+    const { status } = req.query;
+    const analyzers = await storage.getNationalAnalyzers(status as string | undefined);
+    res.json(analyzers);
+  });
+
+  app.get("/api/sovereign/master/analyzers/:id", requireAuth, async (req: any, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const analyzer = await storage.getNationalAnalyzerById(id);
+    if (!analyzer) return res.status(404).json({ message: "National analyzer not found" });
+    res.json(analyzer);
+  });
+
+  app.post("/api/sovereign/master/analyzers", requireAuth, requireRoleScope("NATIONAL_CLINICAL_SUPERVISOR", "MINISTRY_AUDITOR"), async (req: any, res) => {
+    const parsed = insertNationalAnalyzerSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Validation failed", errors: parsed.error.flatten() });
+    const created = await storage.createNationalAnalyzer(parsed.data);
+    await eventBus.emitAndPersist({ eventType: EventTypes.MASTER_DATA_UPDATED, entityType: "national_analyzer", payload: { entityType: "national_analyzers", action: "CREATED", id: created.id }, emittedBy: (req.staffMember || req.user)?.id, labId: null });
+    res.status(201).json(created);
+  });
+
+  app.patch("/api/sovereign/master/analyzers/:id", requireAuth, requireRoleScope("NATIONAL_CLINICAL_SUPERVISOR", "MINISTRY_AUDITOR"), async (req: any, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const parsed = insertNationalAnalyzerSchema.partial().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Validation failed", errors: parsed.error.flatten() });
+    const updated = await storage.updateNationalAnalyzer(id, parsed.data);
+    if (!updated) return res.status(404).json({ message: "National analyzer not found" });
+    await eventBus.emitAndPersist({ eventType: EventTypes.MASTER_DATA_UPDATED, entityType: "national_analyzer", payload: { entityType: "national_analyzers", action: "UPDATED", id, versionCode: updated.versionCode }, emittedBy: (req.staffMember || req.user)?.id, labId: null });
+    res.json(updated);
+  });
+
+  app.get("/api/sovereign/master/roles", requireAuth, async (req: any, res) => {
+    const { status } = req.query;
+    const roles = await storage.getNationalRoles(status as string | undefined);
+    res.json(roles);
+  });
+
+  app.get("/api/sovereign/master/roles/:roleCode", requireAuth, async (req: any, res) => {
+    const role = await storage.getNationalRoleByCode(req.params.roleCode);
+    if (!role) return res.status(404).json({ message: "National role not found" });
+    res.json(role);
+  });
+
+  app.post("/api/sovereign/master/roles", requireAuth, requireRoleScope("NATIONAL_CLINICAL_SUPERVISOR", "MINISTRY_AUDITOR"), async (req: any, res) => {
+    const parsed = insertNationalRoleSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Validation failed", errors: parsed.error.flatten() });
+    const input = parsed.data;
+    const existing = await storage.getNationalRoleByCode(input.roleCode);
+    if (existing) return res.status(409).json({ message: "National role with this code already exists" });
+    const created = await storage.createNationalRole(input);
+    await eventBus.emitAndPersist({ eventType: EventTypes.MASTER_DATA_UPDATED, entityType: "national_role", payload: { entityType: "national_roles", action: "CREATED", roleCode: input.roleCode }, emittedBy: (req.staffMember || req.user)?.id, labId: null });
+    res.status(201).json(created);
+  });
+
+  app.patch("/api/sovereign/master/roles/:id", requireAuth, requireRoleScope("NATIONAL_CLINICAL_SUPERVISOR", "MINISTRY_AUDITOR"), async (req: any, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const parsed = insertNationalRoleSchema.partial().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Validation failed", errors: parsed.error.flatten() });
+    const updated = await storage.updateNationalRole(id, parsed.data);
+    if (!updated) return res.status(404).json({ message: "National role not found" });
+    await eventBus.emitAndPersist({ eventType: EventTypes.MASTER_DATA_UPDATED, entityType: "national_role", payload: { entityType: "national_roles", action: "UPDATED", id, versionCode: updated.versionCode }, emittedBy: (req.staffMember || req.user)?.id, labId: null });
+    res.json(updated);
+  });
+
+  app.get("/api/sovereign/master/facilities", requireAuth, async (req: any, res) => {
+    const { sector, level } = req.query;
+    const facilities = await storage.getNationalFacilities(sector as string | undefined, level as string | undefined);
+    res.json(facilities);
+  });
+
+  app.get("/api/sovereign/master/facilities/:facilityCode", requireAuth, async (req: any, res) => {
+    const facility = await storage.getNationalFacilityByCode(req.params.facilityCode);
+    if (!facility) return res.status(404).json({ message: "National facility not found" });
+    res.json(facility);
+  });
+
+  app.post("/api/sovereign/master/facilities", requireAuth, requireRoleScope("NATIONAL_CLINICAL_SUPERVISOR", "MINISTRY_AUDITOR"), async (req: any, res) => {
+    const parsed = insertNationalFacilitySchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Validation failed", errors: parsed.error.flatten() });
+    const input = parsed.data;
+    const existing = await storage.getNationalFacilityByCode(input.facilityCode);
+    if (existing) return res.status(409).json({ message: "National facility with this code already exists" });
+    const created = await storage.createNationalFacility(input);
+    await eventBus.emitAndPersist({ eventType: EventTypes.MASTER_DATA_UPDATED, entityType: "national_facility", payload: { entityType: "national_facilities", action: "CREATED", facilityCode: input.facilityCode }, emittedBy: (req.staffMember || req.user)?.id, labId: null });
+    res.status(201).json(created);
+  });
+
+  app.patch("/api/sovereign/master/facilities/:id", requireAuth, requireRoleScope("NATIONAL_CLINICAL_SUPERVISOR", "MINISTRY_AUDITOR"), async (req: any, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const parsed = insertNationalFacilitySchema.partial().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Validation failed", errors: parsed.error.flatten() });
+    const updated = await storage.updateNationalFacility(id, parsed.data);
+    if (!updated) return res.status(404).json({ message: "National facility not found" });
+    await eventBus.emitAndPersist({ eventType: EventTypes.MASTER_DATA_UPDATED, entityType: "national_facility", payload: { entityType: "national_facilities", action: "UPDATED", id }, emittedBy: (req.staffMember || req.user)?.id, labId: null });
+    res.json(updated);
   });
 
   // === CLINICAL INTELLIGENCE LAYER ===

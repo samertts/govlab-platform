@@ -63,6 +63,11 @@ import {
   type IntelligenceEvent, type InsertIntelligenceEvent,
   type AnonymizedMetric, type InsertAnonymizedMetric,
   type IntelligenceAlert, type InsertIntelligenceAlert,
+  nationalTests, nationalAnalyzers, nationalRoles, nationalFacilities,
+  type NationalTest, type InsertNationalTest,
+  type NationalAnalyzer, type InsertNationalAnalyzer,
+  type NationalRole, type InsertNationalRole,
+  type NationalFacility, type InsertNationalFacility,
 } from "@shared/schema";
 import { eq, desc, and, sql, isNull } from "drizzle-orm";
 import { createHash } from "crypto";
@@ -339,6 +344,30 @@ export interface IStorage {
   getIntelligenceAlerts(alertType?: string, limit?: number): Promise<IntelligenceAlert[]>;
   findRecentIntelligenceAlert(alertType: string, facilityCode?: string, withinHours?: number, testCode?: string): Promise<IntelligenceAlert | undefined>;
   acknowledgeIntelligenceAlert(id: number, acknowledgedBy: number): Promise<IntelligenceAlert | undefined>;
+
+  // National Master Data: Tests
+  createNationalTest(test: InsertNationalTest): Promise<NationalTest>;
+  getNationalTests(status?: string): Promise<NationalTest[]>;
+  getNationalTestByLoinc(loincCode: string): Promise<NationalTest | undefined>;
+  updateNationalTest(id: number, data: Partial<InsertNationalTest>): Promise<NationalTest | undefined>;
+
+  // National Master Data: Analyzers
+  createNationalAnalyzer(analyzer: InsertNationalAnalyzer): Promise<NationalAnalyzer>;
+  getNationalAnalyzers(status?: string): Promise<NationalAnalyzer[]>;
+  getNationalAnalyzerById(id: number): Promise<NationalAnalyzer | undefined>;
+  updateNationalAnalyzer(id: number, data: Partial<InsertNationalAnalyzer>): Promise<NationalAnalyzer | undefined>;
+
+  // National Master Data: Roles
+  createNationalRole(role: InsertNationalRole): Promise<NationalRole>;
+  getNationalRoles(status?: string): Promise<NationalRole[]>;
+  getNationalRoleByCode(roleCode: string): Promise<NationalRole | undefined>;
+  updateNationalRole(id: number, data: Partial<InsertNationalRole>): Promise<NationalRole | undefined>;
+
+  // National Master Data: Facilities
+  createNationalFacility(facility: InsertNationalFacility): Promise<NationalFacility>;
+  getNationalFacilities(sector?: string, level?: string): Promise<NationalFacility[]>;
+  getNationalFacilityByCode(facilityCode: string): Promise<NationalFacility | undefined>;
+  updateNationalFacility(id: number, data: Partial<InsertNationalFacility>): Promise<NationalFacility | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1969,6 +1998,129 @@ export class DatabaseStorage implements IStorage {
     const [updated] = await db.update(intelligenceAlerts)
       .set({ acknowledged: true, acknowledgedBy, acknowledgedAt: new Date() })
       .where(eq(intelligenceAlerts.id, id))
+      .returning();
+    return updated;
+  }
+
+  // === National Master Data: Tests ===
+
+  async createNationalTest(test: InsertNationalTest): Promise<NationalTest> {
+    const [created] = await db.insert(nationalTests).values(test).returning();
+    return created;
+  }
+
+  async getNationalTests(status?: string): Promise<NationalTest[]> {
+    if (status) {
+      return await db.select().from(nationalTests)
+        .where(eq(nationalTests.status, status))
+        .orderBy(nationalTests.loincCode);
+    }
+    return await db.select().from(nationalTests).orderBy(nationalTests.loincCode);
+  }
+
+  async getNationalTestByLoinc(loincCode: string): Promise<NationalTest | undefined> {
+    const [found] = await db.select().from(nationalTests)
+      .where(eq(nationalTests.loincCode, loincCode));
+    return found;
+  }
+
+  async updateNationalTest(id: number, data: Partial<InsertNationalTest>): Promise<NationalTest | undefined> {
+    const [updated] = await db.update(nationalTests)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(nationalTests.id, id))
+      .returning();
+    return updated;
+  }
+
+  // === National Master Data: Analyzers ===
+
+  async createNationalAnalyzer(analyzer: InsertNationalAnalyzer): Promise<NationalAnalyzer> {
+    const [created] = await db.insert(nationalAnalyzers).values(analyzer).returning();
+    return created;
+  }
+
+  async getNationalAnalyzers(status?: string): Promise<NationalAnalyzer[]> {
+    if (status) {
+      return await db.select().from(nationalAnalyzers)
+        .where(eq(nationalAnalyzers.status, status))
+        .orderBy(nationalAnalyzers.manufacturer);
+    }
+    return await db.select().from(nationalAnalyzers).orderBy(nationalAnalyzers.manufacturer);
+  }
+
+  async getNationalAnalyzerById(id: number): Promise<NationalAnalyzer | undefined> {
+    const [found] = await db.select().from(nationalAnalyzers)
+      .where(eq(nationalAnalyzers.id, id));
+    return found;
+  }
+
+  async updateNationalAnalyzer(id: number, data: Partial<InsertNationalAnalyzer>): Promise<NationalAnalyzer | undefined> {
+    const [updated] = await db.update(nationalAnalyzers)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(nationalAnalyzers.id, id))
+      .returning();
+    return updated;
+  }
+
+  // === National Master Data: Roles ===
+
+  async createNationalRole(role: InsertNationalRole): Promise<NationalRole> {
+    const [created] = await db.insert(nationalRoles).values(role).returning();
+    return created;
+  }
+
+  async getNationalRoles(status?: string): Promise<NationalRole[]> {
+    if (status) {
+      return await db.select().from(nationalRoles)
+        .where(eq(nationalRoles.status, status))
+        .orderBy(nationalRoles.roleCode);
+    }
+    return await db.select().from(nationalRoles).orderBy(nationalRoles.roleCode);
+  }
+
+  async getNationalRoleByCode(roleCode: string): Promise<NationalRole | undefined> {
+    const [found] = await db.select().from(nationalRoles)
+      .where(eq(nationalRoles.roleCode, roleCode));
+    return found;
+  }
+
+  async updateNationalRole(id: number, data: Partial<InsertNationalRole>): Promise<NationalRole | undefined> {
+    const [updated] = await db.update(nationalRoles)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(nationalRoles.id, id))
+      .returning();
+    return updated;
+  }
+
+  // === National Master Data: Facilities ===
+
+  async createNationalFacility(facility: InsertNationalFacility): Promise<NationalFacility> {
+    const [created] = await db.insert(nationalFacilities).values(facility).returning();
+    return created;
+  }
+
+  async getNationalFacilities(sector?: string, level?: string): Promise<NationalFacility[]> {
+    const conditions = [];
+    if (sector) conditions.push(eq(nationalFacilities.sector, sector));
+    if (level) conditions.push(eq(nationalFacilities.level, level));
+    if (conditions.length > 0) {
+      return await db.select().from(nationalFacilities)
+        .where(and(...conditions))
+        .orderBy(nationalFacilities.facilityCode);
+    }
+    return await db.select().from(nationalFacilities).orderBy(nationalFacilities.facilityCode);
+  }
+
+  async getNationalFacilityByCode(facilityCode: string): Promise<NationalFacility | undefined> {
+    const [found] = await db.select().from(nationalFacilities)
+      .where(eq(nationalFacilities.facilityCode, facilityCode));
+    return found;
+  }
+
+  async updateNationalFacility(id: number, data: Partial<InsertNationalFacility>): Promise<NationalFacility | undefined> {
+    const [updated] = await db.update(nationalFacilities)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(nationalFacilities.id, id))
       .returning();
     return updated;
   }

@@ -112,4 +112,5 @@ export const EventTypes = {
   INTELLIGENCE_EVENT_CREATED: "intelligence.event.created",
   INTELLIGENCE_METRIC_AGGREGATED: "intelligence.metric.aggregated",
   INTELLIGENCE_ALERT_GENERATED: "intelligence.alert.generated",
+  MASTER_DATA_UPDATED: "master.data.updated",
 } as const;
