@@ -32,4 +32,9 @@ export const EventTypes = {
   GOVERNANCE_EVALUATED: "governance.evaluated",
   GOVERNANCE_POLICY_CREATED: "governance.policy.created",
   GOVERNANCE_POLICY_UPDATED: "governance.policy.updated",
+  CLINICAL_PATHWAY_EVALUATED: "clinical.pathway.evaluated",
+  CLINICAL_PATHWAY_CREATED: "clinical.pathway.created",
+  CLINICAL_PATHWAY_UPDATED: "clinical.pathway.updated",
+  PATHWAY_RULE_CREATED: "pathway.rule.created",
+  PATHWAY_RULE_UPDATED: "pathway.rule.updated",
 } as const;

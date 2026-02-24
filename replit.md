@@ -43,7 +43,7 @@ Preferred communication style: Simple, everyday language.
 - **Database**: PostgreSQL via `node-postgres` (pg) pool
 - **ORM**: Drizzle ORM with PostgreSQL dialect
 - **Schema Management**: `drizzle-kit push` for applying schema changes (no migration files workflow by default)
-- **Tables**: users (Replit Auth), sessions (Replit Auth), staff, patients, testTypes, samples, testResults, auditLogs, organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems, labs, nationalReports, policyEngine, nationalAccessAudit, identityVerifications, testPolicies, governanceEvents
+- **Tables**: users (Replit Auth), sessions (Replit Auth), staff, patients, testTypes, samples, testResults, auditLogs, organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems, labs, nationalReports, policyEngine, nationalAccessAudit, identityVerifications, testPolicies, governanceEvents, clinicalPathways, pathwayRules, clinicalPathwayEvents
 - **Key Relationships**: organizations → labs (multi-tenant); organizations → directorates → facilities; staff/patients/samples link to labs via labId; patients → samples → testResults → testTypes; auditLogs (hash-chained) reference testResults and staff; invoices → invoiceItems → testTypes
 - **Multi-tenant filtering**: Centralized via `server/tenantScope.ts` middleware. `attachTenantScope` runs after auth and attaches `req.tenantScope` with `{ labId, bypass }`. Helper functions `getTenantLabFilter`, `enforceTenantOwnership`, `stampTenantLabId` provide consistent scoping. Role `ministry_auditor` bypasses filtering and sees all data across labs.
 
@@ -76,7 +76,9 @@ server/               # Backend Express application
   index.ts            # Entry point, middleware setup
   routes.ts           # API route registration with auth
   storage.ts          # Database storage interface and implementation
-  sovereignRoutes.ts  # Sovereign Pilot API routes (org hierarchy, tokens, analyzers, events, offline, invoices)
+  sovereignRoutes.ts  # Sovereign Pilot API routes (org hierarchy, tokens, analyzers, events, offline, invoices, pathways)
+  clinicalPathwaysEngine.ts  # Clinical Pathways Engine (post-commit advisory evaluation)
+  governanceEngine.ts  # Clinical Governance Engine (advisory-first policy evaluation)
   tenantScope.ts      # Centralized multi-tenant scope middleware (attachTenantScope, helpers)
   oversightGuard.ts   # Write-guard middleware blocking national oversight roles from mutations
   nationalIdEncryption.ts  # AES-256-GCM field-level encryption for national IDs
@@ -110,6 +112,11 @@ All sovereign routes are under `/api/sovereign/` or `/api/analyzers/`:
 - **Identity verification (user session)**: `POST /api/sovereign/identity/set-national-id/:patientId`, `POST /api/sovereign/identity/verify/:patientId`, `GET /api/sovereign/identity/status/:patientId`, `GET /api/sovereign/identity/history/:patientId`
 - **Identity verification (analyzer token)**: `POST /api/analyzers/identity/set-national-id/:patientId`, `POST /api/analyzers/identity/verify/:patientId` (Bearer token auth, ANALYZER_SOURCE context)
 - **Identity verification (federation)**: `POST /api/federation/identity/set-national-id/:patientId`, `POST /api/federation/identity/verify/:patientId` (federation auth, FEDERATION_GATEWAY context)
+- **Clinical Pathways — definitions**: `GET/POST /api/sovereign/pathways`, `GET /api/sovereign/pathways/:id`, `PATCH /api/sovereign/pathways/:id/active`
+- **Clinical Pathways — rules**: `GET/POST /api/sovereign/pathway-rules`, `GET /api/sovereign/pathway-rules/:id`, `PATCH /api/sovereign/pathway-rules/:id/active`
+- **Clinical Pathways — evaluate (user session)**: `POST /api/sovereign/pathways/evaluate` (post-commit advisory evaluation)
+- **Clinical Pathways — evaluate (analyzer)**: `POST /api/analyzers/pathways/evaluate` (Bearer token auth, ANALYZER_SOURCE context)
+- **Clinical Pathways — events**: `GET /api/sovereign/pathways/events` (national oversight, read-only)
 - **Technician bench**: `GET /api/sovereign/bench/queue`
 
 ### Dev vs Production

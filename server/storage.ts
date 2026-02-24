@@ -4,6 +4,7 @@ import {
   organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems,
   labs, nationalReports, policyEngine, nationalAccessAudit, identityVerifications,
   testPolicies, governanceEvents,
+  clinicalPathways, pathwayRules, clinicalPathwayEvents,
   type Staff, type InsertStaff,
   type Patient, type InsertPatient, type UpdatePatientRequest,
   type TestType, type InsertTestType,
@@ -20,6 +21,9 @@ import {
   type IdentityVerification, type InsertIdentityVerification,
   type TestPolicy, type InsertTestPolicy,
   type GovernanceEvent, type InsertGovernanceEvent,
+  type ClinicalPathway, type InsertClinicalPathway,
+  type PathwayRule, type InsertPathwayRule,
+  type ClinicalPathwayEvent, type InsertClinicalPathwayEvent,
   type ApiToken, type InsertApiToken,
   type Event, type InsertEvent,
   type OfflineQueueItem, type InsertOfflineQueueItem,
@@ -144,6 +148,27 @@ export interface IStorage {
   // Clinical Governance Engine — Governance Events
   createGovernanceEvent(event: InsertGovernanceEvent): Promise<GovernanceEvent>;
   getGovernanceEvents(specimenId?: number, testCode?: string, limit?: number): Promise<GovernanceEvent[]>;
+
+  // Clinical Pathways Engine — Pathway Definitions
+  createClinicalPathway(pathway: InsertClinicalPathway): Promise<ClinicalPathway>;
+  getClinicalPathways(sector?: string, activeOnly?: boolean): Promise<ClinicalPathway[]>;
+  getClinicalPathway(id: number): Promise<ClinicalPathway | undefined>;
+  updateClinicalPathwayActive(id: number, activeFlag: boolean): Promise<ClinicalPathway | undefined>;
+  getPathwaysByTriggerTest(triggerTest: string, sector?: string): Promise<ClinicalPathway[]>;
+
+  // Clinical Pathways Engine — Pathway Rules
+  createPathwayRule(rule: InsertPathwayRule): Promise<PathwayRule>;
+  getPathwayRules(activeOnly?: boolean): Promise<PathwayRule[]>;
+  getPathwayRule(id: number): Promise<PathwayRule | undefined>;
+  updatePathwayRuleActive(id: number, activeFlag: boolean): Promise<PathwayRule | undefined>;
+  getPathwayRulesByTestCode(testCode: string): Promise<PathwayRule[]>;
+
+  // Clinical Pathways Engine — Pathway Events
+  createClinicalPathwayEvent(event: InsertClinicalPathwayEvent): Promise<ClinicalPathwayEvent>;
+  getClinicalPathwayEvents(specimenId?: number, pathwayId?: number, limit?: number): Promise<ClinicalPathwayEvent[]>;
+
+  // Clinical Pathways Engine — Patient test history check
+  hasPatientCompletedTest(patientId: number, testCode: string, withinDays?: number): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -855,6 +880,125 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(governanceEvents.createdAt));
     if (limit) return await query.limit(limit);
     return await query;
+  }
+
+  // === Clinical Pathways Engine — Pathway Definitions ===
+
+  async createClinicalPathway(pathway: InsertClinicalPathway): Promise<ClinicalPathway> {
+    const [record] = await db.insert(clinicalPathways).values(pathway).returning();
+    return record;
+  }
+
+  async getClinicalPathways(sector?: string, activeOnly?: boolean): Promise<ClinicalPathway[]> {
+    const conditions = [];
+    if (sector) conditions.push(eq(clinicalPathways.sector, sector));
+    if (activeOnly) conditions.push(eq(clinicalPathways.activeFlag, true));
+    return await db.select().from(clinicalPathways)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(clinicalPathways.createdAt));
+  }
+
+  async getClinicalPathway(id: number): Promise<ClinicalPathway | undefined> {
+    const [record] = await db.select().from(clinicalPathways).where(eq(clinicalPathways.id, id));
+    return record;
+  }
+
+  async updateClinicalPathwayActive(id: number, activeFlag: boolean): Promise<ClinicalPathway | undefined> {
+    const [updated] = await db.update(clinicalPathways)
+      .set({ activeFlag })
+      .where(eq(clinicalPathways.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getPathwaysByTriggerTest(triggerTest: string, sector?: string): Promise<ClinicalPathway[]> {
+    const conditions = [
+      eq(clinicalPathways.activeFlag, true),
+      eq(clinicalPathways.triggerTest, triggerTest),
+    ];
+    if (sector) conditions.push(eq(clinicalPathways.sector, sector));
+    return await db.select().from(clinicalPathways)
+      .where(and(...conditions));
+  }
+
+  // === Clinical Pathways Engine — Pathway Rules ===
+
+  async createPathwayRule(rule: InsertPathwayRule): Promise<PathwayRule> {
+    const [record] = await db.insert(pathwayRules).values(rule).returning();
+    return record;
+  }
+
+  async getPathwayRules(activeOnly?: boolean): Promise<PathwayRule[]> {
+    if (activeOnly) {
+      return await db.select().from(pathwayRules)
+        .where(eq(pathwayRules.activeFlag, true))
+        .orderBy(desc(pathwayRules.createdAt));
+    }
+    return await db.select().from(pathwayRules).orderBy(desc(pathwayRules.createdAt));
+  }
+
+  async getPathwayRule(id: number): Promise<PathwayRule | undefined> {
+    const [record] = await db.select().from(pathwayRules).where(eq(pathwayRules.id, id));
+    return record;
+  }
+
+  async updatePathwayRuleActive(id: number, activeFlag: boolean): Promise<PathwayRule | undefined> {
+    const [updated] = await db.update(pathwayRules)
+      .set({ activeFlag })
+      .where(eq(pathwayRules.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getPathwayRulesByTestCode(testCode: string): Promise<PathwayRule[]> {
+    return await db.select().from(pathwayRules)
+      .where(and(
+        eq(pathwayRules.activeFlag, true),
+        eq(pathwayRules.testCode, testCode),
+      ));
+  }
+
+  // === Clinical Pathways Engine — Pathway Events ===
+
+  async createClinicalPathwayEvent(event: InsertClinicalPathwayEvent): Promise<ClinicalPathwayEvent> {
+    const [record] = await db.insert(clinicalPathwayEvents).values(event).returning();
+    return record;
+  }
+
+  async getClinicalPathwayEvents(specimenId?: number, pathwayId?: number, limit?: number): Promise<ClinicalPathwayEvent[]> {
+    const conditions = [];
+    if (specimenId) conditions.push(eq(clinicalPathwayEvents.specimenId, specimenId));
+    if (pathwayId) conditions.push(eq(clinicalPathwayEvents.pathwayId, pathwayId));
+    const query = db.select().from(clinicalPathwayEvents)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(clinicalPathwayEvents.createdAt));
+    if (limit) return await query.limit(limit);
+    return await query;
+  }
+
+  // === Clinical Pathways Engine — Patient test history check ===
+
+  async hasPatientCompletedTest(patientId: number, testCode: string, withinDays?: number): Promise<boolean> {
+    const conditions = [
+      eq(testTypes.code, testCode),
+      eq(samples.patientId, patientId),
+      eq(testResults.status, "verified"),
+    ];
+
+    if (withinDays) {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - withinDays);
+      conditions.push(sql`${testResults.verifiedAt} >= ${cutoff}`);
+    }
+
+    const results = await db.select({ id: testResults.id })
+      .from(testResults)
+      .innerJoin(testTypes, eq(testResults.testTypeId, testTypes.id))
+      .innerJoin(samples, eq(testResults.sampleId, samples.id))
+      .where(and(...conditions))
+      .limit(1);
+
+    return results.length > 0;
   }
 }
 

@@ -291,6 +291,44 @@ export const governanceEvents = pgTable("governance_events", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// === CLINICAL PATHWAYS ENGINE: PATHWAY DEFINITIONS ===
+
+export const clinicalPathways = pgTable("clinical_pathways", {
+  id: serial("id").primaryKey(),
+  pathwayName: text("pathway_name").notNull(),
+  triggerTest: text("trigger_test").notNull(),
+  nextRecommendedTest: text("next_recommended_test").notNull(),
+  sector: text("sector").notNull().default("GOVERNMENT"),
+  conditionType: text("condition_type").notNull(),
+  activeFlag: boolean("active_flag").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// === CLINICAL PATHWAYS ENGINE: PATHWAY RULES ===
+
+export const pathwayRules = pgTable("pathway_rules", {
+  id: serial("id").primaryKey(),
+  testCode: text("test_code").notNull(),
+  requiresPreviousTest: text("requires_previous_test"),
+  timeWindowDays: integer("time_window_days"),
+  suggestionLevel: text("suggestion_level").notNull().default("INFO"),
+  riskClass: text("risk_class").notNull().default("ADVISORY"),
+  activeFlag: boolean("active_flag").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// === CLINICAL PATHWAYS ENGINE: PATHWAY EVENTS ===
+
+export const clinicalPathwayEvents = pgTable("clinical_pathway_events", {
+  id: serial("id").primaryKey(),
+  specimenId: integer("specimen_id").references(() => samples.id),
+  pathwayId: integer("pathway_id").references(() => clinicalPathways.id),
+  suggestionLevel: text("suggestion_level").notNull(),
+  executionContext: text("execution_context").notNull(),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // === SOVEREIGN IDENTITY: VERIFICATION RECORDS ===
 
 export const identityVerifications = pgTable("identity_verifications", {
@@ -442,6 +480,9 @@ export const insertNationalAccessAuditSchema = createInsertSchema(nationalAccess
 export const insertIdentityVerificationSchema = createInsertSchema(identityVerifications).omit({ id: true, createdAt: true });
 export const insertTestPolicySchema = createInsertSchema(testPolicies).omit({ id: true, createdAt: true });
 export const insertGovernanceEventSchema = createInsertSchema(governanceEvents).omit({ id: true, createdAt: true });
+export const insertClinicalPathwaySchema = createInsertSchema(clinicalPathways).omit({ id: true, createdAt: true });
+export const insertPathwayRuleSchema = createInsertSchema(pathwayRules).omit({ id: true, createdAt: true });
+export const insertClinicalPathwayEventSchema = createInsertSchema(clinicalPathwayEvents).omit({ id: true, createdAt: true });
 
 // === EXPLICIT API CONTRACT TYPES ===
 
@@ -450,6 +491,9 @@ export type NationalAccessAuditEntry = typeof nationalAccessAudit.$inferSelect;
 export type IdentityVerification = typeof identityVerifications.$inferSelect;
 export type TestPolicy = typeof testPolicies.$inferSelect;
 export type GovernanceEvent = typeof governanceEvents.$inferSelect;
+export type ClinicalPathway = typeof clinicalPathways.$inferSelect;
+export type PathwayRule = typeof pathwayRules.$inferSelect;
+export type ClinicalPathwayEvent = typeof clinicalPathwayEvents.$inferSelect;
 export type NationalReport = typeof nationalReports.$inferSelect;
 export type Lab = typeof labs.$inferSelect;
 export type Organization = typeof organizations.$inferSelect;
@@ -488,6 +532,9 @@ export type InsertNationalAccessAudit = z.infer<typeof insertNationalAccessAudit
 export type InsertIdentityVerification = z.infer<typeof insertIdentityVerificationSchema>;
 export type InsertTestPolicy = z.infer<typeof insertTestPolicySchema>;
 export type InsertGovernanceEvent = z.infer<typeof insertGovernanceEventSchema>;
+export type InsertClinicalPathway = z.infer<typeof insertClinicalPathwaySchema>;
+export type InsertPathwayRule = z.infer<typeof insertPathwayRuleSchema>;
+export type InsertClinicalPathwayEvent = z.infer<typeof insertClinicalPathwayEventSchema>;
 
 // Request types
 export type CreatePatientRequest = InsertPatient;

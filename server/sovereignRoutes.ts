@@ -9,6 +9,7 @@ import { attachTenantScope, attachTokenTenantScope, getTenantLabFilter, enforceT
 import { encryptNationalId, decryptNationalId, hashNationalId } from "./nationalIdEncryption";
 import { processIdentityVerification, setupIdentityVerificationListener } from "./identityVerificationGateway";
 import { evaluateGovernance, evaluateGovernanceAsync } from "./governanceEngine";
+import { evaluatePathways, evaluatePathwaysPostCommit } from "./clinicalPathwaysEngine";
 
 function hashToken(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
@@ -760,6 +761,199 @@ export function registerSovereignRoutes(app: Express): void {
     const testCode = req.query.testCode as string | undefined;
     const limit = req.query.limit ? Number(req.query.limit) : 100;
     const events = await storage.getGovernanceEvents(specimenId, testCode, limit);
+    res.json(events);
+  });
+
+  // === CLINICAL PATHWAYS ENGINE: PATHWAY DEFINITIONS ===
+
+  app.get("/api/sovereign/pathways", requireAuth, requireNationalOversight, async (req: any, res) => {
+    const sector = req.query.sector as string | undefined;
+    const activeOnly = req.query.active === "true";
+    const pathways = await storage.getClinicalPathways(sector, activeOnly);
+    res.json(pathways);
+  });
+
+  app.post("/api/sovereign/pathways", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const input = z.object({
+        pathwayName: z.string().min(1),
+        triggerTest: z.string().min(1),
+        nextRecommendedTest: z.string().min(1),
+        sector: z.enum(["GOVERNMENT", "PRIVATE", "NATIONAL"]),
+        conditionType: z.enum(["SCREENING", "FOLLOW_UP", "MONITORING", "DIAGNOSTIC_SEQUENCE"]),
+      }).parse(req.body);
+
+      const pathway = await storage.createClinicalPathway(input);
+
+      await eventBus.emitAndPersist({
+        eventType: EventTypes.CLINICAL_PATHWAY_CREATED,
+        entityType: "clinical_pathway",
+        entityId: pathway.id,
+        payload: { pathwayName: pathway.pathwayName, triggerTest: pathway.triggerTest, sector: pathway.sector },
+        emittedBy: req.staffMember.id,
+      });
+
+      res.status(201).json(pathway);
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      throw err;
+    }
+  });
+
+  app.get("/api/sovereign/pathways/:id", requireAuth, requireNationalOversight, async (req: any, res) => {
+    const pathway = await storage.getClinicalPathway(Number(req.params.id));
+    if (!pathway) return res.status(404).json({ message: "Clinical pathway not found" });
+    res.json(pathway);
+  });
+
+  app.patch("/api/sovereign/pathways/:id/active", requireAuth, requireAdmin, async (req: any, res) => {
+    const input = z.object({ activeFlag: z.boolean() }).parse(req.body);
+    const updated = await storage.updateClinicalPathwayActive(Number(req.params.id), input.activeFlag);
+    if (!updated) return res.status(404).json({ message: "Clinical pathway not found" });
+
+    await eventBus.emitAndPersist({
+      eventType: EventTypes.CLINICAL_PATHWAY_UPDATED,
+      entityType: "clinical_pathway",
+      entityId: updated.id,
+      payload: { activeFlag: updated.activeFlag },
+      emittedBy: req.staffMember.id,
+    });
+
+    res.json(updated);
+  });
+
+  // === CLINICAL PATHWAYS ENGINE: PATHWAY RULES ===
+
+  app.get("/api/sovereign/pathway-rules", requireAuth, requireNationalOversight, async (req: any, res) => {
+    const activeOnly = req.query.active === "true";
+    const rules = await storage.getPathwayRules(activeOnly);
+    res.json(rules);
+  });
+
+  app.post("/api/sovereign/pathway-rules", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const input = z.object({
+        testCode: z.string().min(1),
+        requiresPreviousTest: z.string().optional().nullable(),
+        timeWindowDays: z.number().int().positive().optional().nullable(),
+        suggestionLevel: z.enum(["INFO", "WARN", "REQUIRE_APPROVAL"]),
+        riskClass: z.enum(["ADVISORY", "HIGH_RISK"]),
+      }).parse(req.body);
+
+      const rule = await storage.createPathwayRule(input);
+
+      await eventBus.emitAndPersist({
+        eventType: EventTypes.PATHWAY_RULE_CREATED,
+        entityType: "pathway_rule",
+        entityId: rule.id,
+        payload: { testCode: rule.testCode, suggestionLevel: rule.suggestionLevel, riskClass: rule.riskClass },
+        emittedBy: req.staffMember.id,
+      });
+
+      res.status(201).json(rule);
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      throw err;
+    }
+  });
+
+  app.get("/api/sovereign/pathway-rules/:id", requireAuth, requireNationalOversight, async (req: any, res) => {
+    const rule = await storage.getPathwayRule(Number(req.params.id));
+    if (!rule) return res.status(404).json({ message: "Pathway rule not found" });
+    res.json(rule);
+  });
+
+  app.patch("/api/sovereign/pathway-rules/:id/active", requireAuth, requireAdmin, async (req: any, res) => {
+    const input = z.object({ activeFlag: z.boolean() }).parse(req.body);
+    const updated = await storage.updatePathwayRuleActive(Number(req.params.id), input.activeFlag);
+    if (!updated) return res.status(404).json({ message: "Pathway rule not found" });
+
+    await eventBus.emitAndPersist({
+      eventType: EventTypes.PATHWAY_RULE_UPDATED,
+      entityType: "pathway_rule",
+      entityId: updated.id,
+      payload: { activeFlag: updated.activeFlag },
+      emittedBy: req.staffMember.id,
+    });
+
+    res.json(updated);
+  });
+
+  // === CLINICAL PATHWAYS ENGINE: EVALUATE (USER_SESSION) ===
+
+  app.post("/api/sovereign/pathways/evaluate", requireAuth, async (req: any, res) => {
+    try {
+      const input = z.object({
+        testCode: z.string().min(1),
+        sector: z.enum(["GOVERNMENT", "PRIVATE", "NATIONAL"]),
+        patientId: z.number().int().positive(),
+        specimenId: z.number().int().positive().optional().nullable(),
+      }).parse(req.body);
+
+      const executionContext = resolveExecutionContext(req.tenantScope);
+
+      const result = await evaluatePathways(
+        input.testCode,
+        input.sector,
+        input.patientId,
+        input.specimenId ?? null,
+        executionContext,
+        req.staffMember?.id || null,
+      );
+
+      res.json(result);
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      res.json({
+        specimenId: null, triggerTestCode: req.body?.testCode || "", sector: req.body?.sector || "",
+        evaluatedAt: new Date().toISOString(), executionContext: "USER_SESSION",
+        suggestions: [], totalPathwaysEvaluated: 0, totalRulesEvaluated: 0,
+        engineError: true,
+      });
+    }
+  });
+
+  // === CLINICAL PATHWAYS ENGINE: EVALUATE (ANALYZER_SOURCE) ===
+
+  app.post("/api/analyzers/pathways/evaluate", requireTokenAuth, async (req: any, res) => {
+    try {
+      const input = z.object({
+        testCode: z.string().min(1),
+        sector: z.enum(["GOVERNMENT", "PRIVATE", "NATIONAL"]),
+        patientId: z.number().int().positive(),
+        specimenId: z.number().int().positive().optional().nullable(),
+      }).parse(req.body);
+
+      const executionContext = resolveExecutionContext(req.tenantScope);
+
+      const result = await evaluatePathways(
+        input.testCode,
+        input.sector,
+        input.patientId,
+        input.specimenId ?? null,
+        executionContext,
+        null,
+      );
+
+      res.json(result);
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      res.json({
+        specimenId: null, triggerTestCode: req.body?.testCode || "", sector: req.body?.sector || "",
+        evaluatedAt: new Date().toISOString(), executionContext: "ANALYZER_SOURCE",
+        suggestions: [], totalPathwaysEvaluated: 0, totalRulesEvaluated: 0,
+        engineError: true,
+      });
+    }
+  });
+
+  // === CLINICAL PATHWAYS ENGINE: PATHWAY EVENTS (read-only) ===
+
+  app.get("/api/sovereign/pathways/events", requireAuth, requireNationalOversight, async (req: any, res) => {
+    const specimenId = req.query.specimenId ? Number(req.query.specimenId) : undefined;
+    const pathwayId = req.query.pathwayId ? Number(req.query.pathwayId) : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : 100;
+    const events = await storage.getClinicalPathwayEvents(specimenId, pathwayId, limit);
     res.json(events);
   });
 
