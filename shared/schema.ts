@@ -567,6 +567,52 @@ export const securityEvents = pgTable("security_events", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// === ZERO-TRUST SECURITY ARCHITECTURE ===
+
+export const zeroTrustIdentities = pgTable("zero_trust_identities", {
+  id: serial("id").primaryKey(),
+  identityUuid: varchar("identity_uuid", { length: 64 }).notNull().unique(),
+  identityType: varchar("identity_type", { length: 30 }).notNull(),
+  entityRef: integer("entity_ref"),
+  signedTokenHash: text("signed_token_hash").notNull(),
+  facilityScope: varchar("facility_scope", { length: 200 }),
+  roleScope: varchar("role_scope", { length: 100 }),
+  tokenStatus: varchar("token_status", { length: 20 }).notNull().default("ACTIVE"),
+  issuedAt: timestamp("issued_at").defaultNow(),
+  expiresAt: timestamp("expires_at").notNull(),
+  rotatedFrom: varchar("rotated_from", { length: 64 }),
+  lastUsedAt: timestamp("last_used_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const securityQuarantineQueue = pgTable("security_quarantine_queue", {
+  id: serial("id").primaryKey(),
+  originalEventId: integer("original_event_id"),
+  eventType: varchar("event_type", { length: 128 }).notNull(),
+  payload: jsonb("payload"),
+  quarantineReason: varchar("quarantine_reason", { length: 200 }).notNull(),
+  signatureHash: varchar("signature_hash", { length: 128 }),
+  issuerIdentity: varchar("issuer_identity", { length: 64 }),
+  severity: varchar("severity", { length: 20 }).notNull().default("HIGH"),
+  reviewStatus: varchar("review_status", { length: 20 }).notNull().default("PENDING"),
+  reviewedBy: integer("reviewed_by").references(() => staff.id),
+  reviewedAt: timestamp("reviewed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const nationalAuditTrail = pgTable("national_audit_trail", {
+  id: serial("id").primaryKey(),
+  identityUuid: varchar("identity_uuid", { length: 64 }).notNull(),
+  actionType: varchar("action_type", { length: 100 }).notNull(),
+  entityRef: text("entity_ref"),
+  facilityScope: varchar("facility_scope", { length: 200 }),
+  reasonCode: varchar("reason_code", { length: 100 }),
+  accessOrigin: varchar("access_origin", { length: 200 }),
+  reviewFlag: boolean("review_flag").default(false),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // === DISASTER-PROOF OFFLINE ARCHITECTURE: LOCAL SYNC EVENTS ===
 
 export const localSyncEvents = pgTable("local_sync_events", {
@@ -592,6 +638,7 @@ export const syncConflictPolicy = pgTable("sync_conflict_policy", {
   entityType: varchar("entity_type", { length: 100 }).notNull(),
   priorityOrder: varchar("priority_order", { length: 200 }).notNull().default("LOCAL_LAB,DIRECTORATE,NATIONAL"),
   mergeStrategy: varchar("merge_strategy", { length: 50 }).notNull().default("LAST_WRITE_WINS"),
+  retentionDays: integer("retention_days").notNull().default(365),
   activeFlag: boolean("active_flag").default(true),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -783,6 +830,9 @@ export const insertAnalyzerEventQueueSchema = createInsertSchema(analyzerEventQu
 export const insertResultsHotSchema = createInsertSchema(resultsHot).omit({ id: true, createdAt: true });
 export const insertResultsArchiveSchema = createInsertSchema(resultsArchive).omit({ id: true, archivedAt: true });
 export const insertPatientHistorySummarySchema = createInsertSchema(patientHistorySummary).omit({ id: true, updatedAt: true });
+export const insertZeroTrustIdentitySchema = createInsertSchema(zeroTrustIdentities).omit({ id: true, createdAt: true, issuedAt: true, lastUsedAt: true });
+export const insertSecurityQuarantineSchema = createInsertSchema(securityQuarantineQueue).omit({ id: true, createdAt: true, reviewedAt: true });
+export const insertNationalAuditTrailSchema = createInsertSchema(nationalAuditTrail).omit({ id: true, createdAt: true });
 export const insertLocalSyncEventSchema = createInsertSchema(localSyncEvents).omit({ id: true, createdAt: true });
 export const insertSyncConflictPolicySchema = createInsertSchema(syncConflictPolicy).omit({ id: true, createdAt: true });
 export const insertConflictAuditLogSchema = createInsertSchema(conflictAuditLog).omit({ id: true, createdAt: true });
@@ -828,6 +878,9 @@ export type AnalyzerEventQueueEntry = typeof analyzerEventQueue.$inferSelect;
 export type ResultHot = typeof resultsHot.$inferSelect;
 export type ResultArchive = typeof resultsArchive.$inferSelect;
 export type PatientHistorySummaryEntry = typeof patientHistorySummary.$inferSelect;
+export type ZeroTrustIdentity = typeof zeroTrustIdentities.$inferSelect;
+export type SecurityQuarantineEntry = typeof securityQuarantineQueue.$inferSelect;
+export type NationalAuditTrailEntry = typeof nationalAuditTrail.$inferSelect;
 export type LocalSyncEvent = typeof localSyncEvents.$inferSelect;
 export type SyncConflictPolicyEntry = typeof syncConflictPolicy.$inferSelect;
 export type ConflictAuditLogEntry = typeof conflictAuditLog.$inferSelect;
@@ -871,6 +924,9 @@ export type InsertAnalyzerEventQueue = z.infer<typeof insertAnalyzerEventQueueSc
 export type InsertResultHot = z.infer<typeof insertResultsHotSchema>;
 export type InsertResultArchive = z.infer<typeof insertResultsArchiveSchema>;
 export type InsertPatientHistorySummary = z.infer<typeof insertPatientHistorySummarySchema>;
+export type InsertZeroTrustIdentity = z.infer<typeof insertZeroTrustIdentitySchema>;
+export type InsertSecurityQuarantine = z.infer<typeof insertSecurityQuarantineSchema>;
+export type InsertNationalAuditTrail = z.infer<typeof insertNationalAuditTrailSchema>;
 export type InsertLocalSyncEvent = z.infer<typeof insertLocalSyncEventSchema>;
 export type InsertSyncConflictPolicy = z.infer<typeof insertSyncConflictPolicySchema>;
 export type InsertConflictAuditLog = z.infer<typeof insertConflictAuditLogSchema>;

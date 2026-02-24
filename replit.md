@@ -42,11 +42,22 @@ GovLab LIS is built with a clear separation of concerns between its frontend and
 - **Key Design Rules**: Governance/pathways/intelligence engines execute post-sync only. Sample ownership remains single-facility. Projection stability: max 2 projections per domain. Server-side execution_context only.
 - **API Routes**: `/api/sovereign/offline-sync/*`, `/api/sovereign/event-budget/*`, `/api/sovereign/conflict-policies`, `/api/sovereign/conflict-audit`, `/api/sovereign/facility-connectivity/*`.
 
+### Zero-Trust Security Architecture
+- **Identity Model** (`server/zeroTrustTokenService.ts`): `zero_trust_identities` table supports USER, ANALYZER, LOCAL_NODE identity types with short-lived (30min) rotatable tokens, HMAC-signed token hashes, facility_scope and role_scope enforcement, and automatic expiry cleanup.
+- **Event Signing** (`server/eventSigningService.ts`): All inter-service events are HMAC-signed with signature_hash, issuer_identity, and issued_at fields. Signing is automatic in `eventBus.emitAndPersist`. Workers validate signatures before processing; invalid events are quarantined to `security_quarantine_queue` with SECURITY_ALERT generation.
+- **Field-Level Encryption**: AES-256-GCM encryption for patient national IDs via `nationalIdEncryption.ts`. Decryption is role-gated (PATHOLOGIST, LAB_ADMIN, NATIONAL_CLINICAL_SUPERVISOR, MINISTRY_AUDITOR only).
+- **Least-Privilege Access Roles**: TECHNICIAN (lab-scoped ops), PATHOLOGIST (verification/review), LAB_ADMIN (facility config), NATIONAL_CLINICAL_SUPERVISOR (cross-facility advisory read-only), MINISTRY_AUDITOR (national read-only audit). No role has unrestricted global write.
+- **Cross-Facility Isolation** (`server/zeroTrustAccessControl.ts`): Cross-facility data access blocked by default. National roles require access_reason_code and access_origin. All cross-facility reads logged to `national_audit_trail` with review_flag.
+- **National Audit Trail**: Append-only `national_audit_trail` table records identity_uuid, action_type, entity_ref, facility_scope, reason_code, access_origin, review_flag, timestamp.
+- **Zero-Trust Worker Enforcement**: Workers derive execution context server-side only; client-provided role/facility headers are stripped by `blockClientProvidedContext` middleware.
+- **Security Resilience**: Signature validation failures quarantine events (never block LIS workflows). Expired tokens allow local LIS operations but deny national-level propagation.
+- **API Routes**: `/api/sovereign/zero-trust/identities/*`, `/api/sovereign/zero-trust/quarantine/*`, `/api/sovereign/zero-trust/audit-trail/*`, `/api/sovereign/zero-trust/cross-facility-access`.
+
 ### Data Storage
 - **Database**: PostgreSQL.
 - **ORM**: Drizzle ORM with `node-postgres`.
 - **Schema Management**: `drizzle-kit push`.
-- **Key Tables**: `users`, `staff`, `patients`, `testTypes`, `samples`, `testResults`, `auditLogs`, `organizations`, `labs`, `clinicalPathways`, `governanceEvents`, `analyzers`, `localSyncEvents`, `syncConflictPolicy`, `conflictAuditLog`, `facilityConnectivityStatus`, and various read model tables.
+- **Key Tables**: `users`, `staff`, `patients`, `testTypes`, `samples`, `testResults`, `auditLogs`, `organizations`, `labs`, `clinicalPathways`, `governanceEvents`, `analyzers`, `localSyncEvents`, `syncConflictPolicy`, `conflictAuditLog`, `facilityConnectivityStatus`, `zeroTrustIdentities`, `securityQuarantineQueue`, `nationalAuditTrail`, and various read model tables.
 - **Data Archiving**: Hot vs. cold data architecture for results.
 
 ### Project Structure

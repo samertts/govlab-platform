@@ -18,6 +18,8 @@ import { startAnalyzerWorker, getAnalyzerWorkerStatus } from "./analyzerWorkerSe
 import { sessionAnomalyDetector } from "./securityGuardrails";
 import { startOfflineSyncWorker, getOfflineSyncWorkerStatus, createOfflineSyncEvent } from "./offlineSyncWorker";
 import { globalEventBudget } from "./globalEventBudget";
+import { issueIdentityToken, rotateIdentityToken, revokeIdentity, validateIdentityToken, startTokenCleanup } from "./zeroTrustTokenService";
+import { blockClientProvidedContext, enforceFacilityIsolation, requireRoleScope, deriveServerExecutionContext, sanitizePatientForRole } from "./zeroTrustAccessControl";
 
 function hashToken(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
@@ -59,6 +61,8 @@ const requireTokenAuth = async (req: any, res: Response, next: NextFunction) => 
 };
 
 export function registerSovereignRoutes(app: Express): void {
+
+  app.use("/api/sovereign", blockClientProvidedContext);
 
   // === ORGANIZATION HIERARCHY ===
 
@@ -1728,6 +1732,132 @@ export function registerSovereignRoutes(app: Express): void {
     res.json(updated);
   });
 
+  // === ZERO-TRUST IDENTITY MANAGEMENT ===
+
+  app.post("/api/sovereign/zero-trust/identities", requireAuth, requireAdmin, blockClientProvidedContext, async (req: any, res) => {
+    const { identityType, entityRef, facilityScope, roleScope } = req.body;
+    if (!identityType || !["USER", "ANALYZER", "LOCAL_NODE"].includes(identityType)) {
+      return res.status(400).json({ message: "identityType must be USER, ANALYZER, or LOCAL_NODE" });
+    }
+    if (!entityRef || typeof entityRef !== "number") {
+      return res.status(400).json({ message: "entityRef (numeric) is required" });
+    }
+    if (!facilityScope || !roleScope) {
+      return res.status(400).json({ message: "facilityScope and roleScope are required" });
+    }
+    const result = await issueIdentityToken(identityType, entityRef, facilityScope, roleScope);
+    res.status(201).json({
+      identityUuid: result.identityUuid,
+      token: result.rawToken,
+      expiresAt: result.expiresAt.toISOString(),
+    });
+  });
+
+  app.post("/api/sovereign/zero-trust/identities/:identityUuid/rotate", requireAuth, requireAdmin, async (req: any, res) => {
+    const result = await rotateIdentityToken(req.params.identityUuid);
+    if (!result) return res.status(404).json({ message: "Identity not found or not active" });
+    res.json({
+      identityUuid: result.identityUuid,
+      token: result.rawToken,
+      expiresAt: result.expiresAt.toISOString(),
+    });
+  });
+
+  app.post("/api/sovereign/zero-trust/identities/:identityUuid/revoke", requireAuth, requireAdmin, async (req: any, res) => {
+    const revoked = await revokeIdentity(req.params.identityUuid);
+    if (!revoked) return res.status(404).json({ message: "Identity not found" });
+    res.json({ message: "Identity revoked" });
+  });
+
+  app.post("/api/sovereign/zero-trust/identities/validate", requireAuth, async (req: any, res) => {
+    const { identityUuid, token } = req.body;
+    if (!identityUuid || !token) {
+      return res.status(400).json({ message: "identityUuid and token are required" });
+    }
+    const result = await validateIdentityToken(identityUuid, token);
+    res.json({
+      valid: result.valid,
+      reason: result.reason,
+      localOnly: result.localOnly || false,
+      identityType: result.identity?.identityType,
+      facilityScope: result.identity?.facilityScope,
+      roleScope: result.identity?.roleScope,
+    });
+  });
+
+  app.get("/api/sovereign/zero-trust/identities", requireAuth, requireAdmin, async (req: any, res) => {
+    const identityType = req.query.identityType as string | undefined;
+    const identities = await storage.getActiveIdentities(identityType);
+    res.json(identities.map(i => ({
+      ...i,
+      signedTokenHash: "[REDACTED]",
+    })));
+  });
+
+  // === SECURITY QUARANTINE QUEUE ===
+
+  app.get("/api/sovereign/zero-trust/quarantine", requireAuth, requireAdmin, async (req: any, res) => {
+    const reviewStatus = req.query.reviewStatus as string | undefined;
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const entries = await storage.getQuarantineEntries(reviewStatus, limit);
+    res.json(entries);
+  });
+
+  app.patch("/api/sovereign/zero-trust/quarantine/:id/review", requireAuth, requireAdmin, async (req: any, res) => {
+    const id = Number(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid quarantine entry ID" });
+    const { reviewStatus } = req.body;
+    if (!reviewStatus || !["APPROVED", "REJECTED", "ESCALATED"].includes(reviewStatus)) {
+      return res.status(400).json({ message: "reviewStatus must be APPROVED, REJECTED, or ESCALATED" });
+    }
+    const userId = req.user?.id || req.staffMember?.id;
+    const updated = await storage.updateQuarantineReview(id, reviewStatus, userId);
+    if (!updated) return res.status(404).json({ message: "Quarantine entry not found" });
+    res.json(updated);
+  });
+
+  // === NATIONAL AUDIT TRAIL ===
+
+  app.get("/api/sovereign/zero-trust/audit-trail", requireAuth, requireRoleScope("LAB_ADMIN", "NATIONAL_CLINICAL_SUPERVISOR", "MINISTRY_AUDITOR"), enforceFacilityIsolation, async (req: any, res) => {
+    const facilityScope = req.query.facilityScope as string | undefined;
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const trail = await storage.getNationalAuditTrail(facilityScope, limit);
+    res.json(trail);
+  });
+
+  app.get("/api/sovereign/zero-trust/audit-trail/identity/:identityUuid", requireAuth, requireRoleScope("LAB_ADMIN", "NATIONAL_CLINICAL_SUPERVISOR", "MINISTRY_AUDITOR"), enforceFacilityIsolation, async (req: any, res) => {
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const trail = await storage.getNationalAuditByIdentity(req.params.identityUuid, limit);
+    res.json(trail);
+  });
+
+  // === CROSS-FACILITY ACCESS REQUESTS ===
+
+  app.post("/api/sovereign/zero-trust/cross-facility-access", requireAuth, requireRoleScope("NATIONAL_CLINICAL_SUPERVISOR", "MINISTRY_AUDITOR"), async (req: any, res) => {
+    const { targetFacilityCode, reasonCode, accessOrigin, entityRef } = req.body;
+    if (!targetFacilityCode || !reasonCode) {
+      return res.status(400).json({ message: "targetFacilityCode and reasonCode are required" });
+    }
+
+    const staffMember = req.staffMember || req.user;
+    await storage.createNationalAuditEntry({
+      identityUuid: `staff:${staffMember.id}`,
+      actionType: "CROSS_FACILITY_ACCESS_REQUEST",
+      entityRef: entityRef || targetFacilityCode,
+      facilityScope: targetFacilityCode,
+      reasonCode,
+      accessOrigin: accessOrigin || req.ip,
+      reviewFlag: true,
+      metadata: {
+        requestedBy: staffMember.username,
+        role: staffMember.role,
+        timestamp: new Date().toISOString(),
+      },
+    });
+
+    res.status(201).json({ message: "Cross-facility access request logged", reviewFlag: true });
+  });
+
   // === START WORKERS & EVENT SUBSCRIPTIONS ===
 
   startEventWorker();
@@ -1737,4 +1867,5 @@ export function registerSovereignRoutes(app: Express): void {
   startArchiveWorker();
   startAnalyzerWorker();
   startOfflineSyncWorker();
+  startTokenCleanup();
 }

@@ -4,6 +4,7 @@ import { processEventProjections } from "./readModelProjections";
 import { orchestrateSuggestion } from "./unifiedSuggestionOrchestrator";
 import { processNotification } from "./notificationEngine";
 import { validateEventOrigin } from "./securityGuardrails";
+import { verifyEventSignature, quarantineEvent } from "./eventSigningService";
 
 const POLL_INTERVAL_MS = 5_000;
 const BATCH_SIZE = 50;
@@ -72,6 +73,24 @@ async function processEvent(event: any): Promise<void> {
       await storage.markEventFailed(event.id);
       failedCount++;
       return;
+    }
+
+    const payload = event.payload as any;
+    if (payload && payload.signatureHash) {
+      const sigResult = verifyEventSignature({
+        eventType: event.eventType,
+        payload,
+        signatureHash: payload.signatureHash,
+        issuerIdentity: payload.issuerIdentity,
+        issuedAt: payload.issuedAt,
+      });
+
+      if (!sigResult.valid) {
+        await quarantineEvent(event, sigResult.reason || "INVALID_SIGNATURE");
+        await storage.markEventFailed(event.id);
+        failedCount++;
+        return;
+      }
     }
 
     await processEventProjections(event);

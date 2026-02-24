@@ -1,6 +1,7 @@
 import { EventEmitter } from "events";
 import { storage } from "./storage";
 import type { InsertEvent } from "@shared/schema";
+import { signEvent } from "./eventSigningService";
 
 const SENSITIVE_PAYLOAD_KEYS = [
   "nationalIdEncrypted", "national_id_encrypted", "nationalIdHash",
@@ -29,10 +30,26 @@ class UnifiedEventBus extends EventEmitter {
   }
 
   async emitAndPersist(event: InsertEvent): Promise<void> {
+    const sanitizedPayload = sanitizePayload(event.payload);
+
+    const signing = signEvent({
+      eventType: event.eventType,
+      payload: sanitizedPayload,
+      issuerIdentity: (event as any).issuerIdentity,
+    });
+
+    const signedPayload = {
+      ...(typeof sanitizedPayload === "object" && sanitizedPayload !== null ? sanitizedPayload : { data: sanitizedPayload }),
+      signatureHash: signing.signatureHash,
+      issuerIdentity: signing.issuerIdentity,
+      issuedAt: signing.issuedAt,
+    };
+
     const sanitizedEvent = {
       ...event,
-      payload: sanitizePayload(event.payload),
+      payload: signedPayload,
     };
+
     await storage.createEvent(sanitizedEvent);
     super.emit(sanitizedEvent.eventType, sanitizedEvent);
     super.emit("*", sanitizedEvent);
@@ -84,4 +101,12 @@ export const EventTypes = {
   SYNC_FAILED: "sync.failed",
   GLOBAL_BUDGET_WARNING: "global.budget.warning",
   FACILITY_CONNECTIVITY_CHANGED: "facility.connectivity.changed",
+  IDENTITY_TOKEN_ISSUED: "identity.token.issued",
+  IDENTITY_TOKEN_ROTATED: "identity.token.rotated",
+  IDENTITY_TOKEN_REVOKED: "identity.token.revoked",
+  IDENTITY_TOKEN_EXPIRED: "identity.token.expired",
+  SECURITY_ALERT: "security.alert",
+  EVENT_QUARANTINED: "event.quarantined",
+  CROSS_FACILITY_ACCESS: "cross.facility.access",
+  NATIONAL_AUDIT_LOGGED: "national.audit.logged",
 } as const;

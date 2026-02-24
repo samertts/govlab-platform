@@ -55,6 +55,10 @@ import {
   type SyncConflictPolicyEntry, type InsertSyncConflictPolicy,
   type ConflictAuditLogEntry, type InsertConflictAuditLog,
   type FacilityConnectivityStatusEntry, type InsertFacilityConnectivityStatus,
+  zeroTrustIdentities, securityQuarantineQueue, nationalAuditTrail,
+  type ZeroTrustIdentity, type InsertZeroTrustIdentity,
+  type SecurityQuarantineEntry, type InsertSecurityQuarantine,
+  type NationalAuditTrailEntry, type InsertNationalAuditTrail,
 } from "@shared/schema";
 import { eq, desc, and, sql, isNull } from "drizzle-orm";
 import { createHash } from "crypto";
@@ -292,6 +296,25 @@ export interface IStorage {
   upsertFacilityConnectivityStatus(entry: InsertFacilityConnectivityStatus): Promise<FacilityConnectivityStatusEntry>;
   getFacilityConnectivityStatus(facilityCode: string): Promise<FacilityConnectivityStatusEntry | undefined>;
   getAllFacilityConnectivityStatuses(): Promise<FacilityConnectivityStatusEntry[]>;
+
+  // Zero-Trust Security: Identities
+  createZeroTrustIdentity(identity: InsertZeroTrustIdentity): Promise<ZeroTrustIdentity>;
+  getZeroTrustIdentityByUuid(identityUuid: string): Promise<ZeroTrustIdentity | undefined>;
+  getZeroTrustIdentitiesByEntity(identityType: string, entityRef: number): Promise<ZeroTrustIdentity[]>;
+  updateZeroTrustIdentityStatus(id: number, tokenStatus: string): Promise<ZeroTrustIdentity | undefined>;
+  updateZeroTrustIdentityLastUsed(id: number): Promise<void>;
+  getActiveIdentities(identityType?: string): Promise<ZeroTrustIdentity[]>;
+  revokeExpiredIdentities(): Promise<number>;
+
+  // Zero-Trust Security: Quarantine Queue
+  createQuarantineEntry(entry: InsertSecurityQuarantine): Promise<SecurityQuarantineEntry>;
+  getQuarantineEntries(reviewStatus?: string, limit?: number): Promise<SecurityQuarantineEntry[]>;
+  updateQuarantineReview(id: number, reviewStatus: string, reviewedBy: number): Promise<SecurityQuarantineEntry | undefined>;
+
+  // Zero-Trust Security: National Audit Trail
+  createNationalAuditEntry(entry: InsertNationalAuditTrail): Promise<NationalAuditTrailEntry>;
+  getNationalAuditTrail(facilityScope?: string, limit?: number): Promise<NationalAuditTrailEntry[]>;
+  getNationalAuditByIdentity(identityUuid: string, limit?: number): Promise<NationalAuditTrailEntry[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1692,6 +1715,115 @@ export class DatabaseStorage implements IStorage {
   async getAllFacilityConnectivityStatuses(): Promise<FacilityConnectivityStatusEntry[]> {
     return await db.select().from(facilityConnectivityStatus)
       .orderBy(desc(facilityConnectivityStatus.updatedAt));
+  }
+
+  // === Zero-Trust Security: Identities ===
+
+  async createZeroTrustIdentity(identity: InsertZeroTrustIdentity): Promise<ZeroTrustIdentity> {
+    const [created] = await db.insert(zeroTrustIdentities).values(identity).returning();
+    return created;
+  }
+
+  async getZeroTrustIdentityByUuid(identityUuid: string): Promise<ZeroTrustIdentity | undefined> {
+    const [found] = await db.select().from(zeroTrustIdentities)
+      .where(eq(zeroTrustIdentities.identityUuid, identityUuid))
+      .limit(1);
+    return found;
+  }
+
+  async getZeroTrustIdentitiesByEntity(identityType: string, entityRef: number): Promise<ZeroTrustIdentity[]> {
+    return await db.select().from(zeroTrustIdentities)
+      .where(and(eq(zeroTrustIdentities.identityType, identityType), eq(zeroTrustIdentities.entityRef, entityRef)))
+      .orderBy(desc(zeroTrustIdentities.createdAt));
+  }
+
+  async updateZeroTrustIdentityStatus(id: number, tokenStatus: string): Promise<ZeroTrustIdentity | undefined> {
+    const [updated] = await db.update(zeroTrustIdentities)
+      .set({ tokenStatus })
+      .where(eq(zeroTrustIdentities.id, id))
+      .returning();
+    return updated;
+  }
+
+  async updateZeroTrustIdentityLastUsed(id: number): Promise<void> {
+    await db.update(zeroTrustIdentities)
+      .set({ lastUsedAt: new Date() })
+      .where(eq(zeroTrustIdentities.id, id));
+  }
+
+  async getActiveIdentities(identityType?: string): Promise<ZeroTrustIdentity[]> {
+    if (identityType) {
+      return await db.select().from(zeroTrustIdentities)
+        .where(and(eq(zeroTrustIdentities.tokenStatus, "ACTIVE"), eq(zeroTrustIdentities.identityType, identityType)))
+        .orderBy(desc(zeroTrustIdentities.createdAt));
+    }
+    return await db.select().from(zeroTrustIdentities)
+      .where(eq(zeroTrustIdentities.tokenStatus, "ACTIVE"))
+      .orderBy(desc(zeroTrustIdentities.createdAt));
+  }
+
+  async revokeExpiredIdentities(): Promise<number> {
+    const result = await db.update(zeroTrustIdentities)
+      .set({ tokenStatus: "EXPIRED" })
+      .where(and(
+        eq(zeroTrustIdentities.tokenStatus, "ACTIVE"),
+        sql`${zeroTrustIdentities.expiresAt} < NOW()`
+      ))
+      .returning();
+    return result.length;
+  }
+
+  // === Zero-Trust Security: Quarantine Queue ===
+
+  async createQuarantineEntry(entry: InsertSecurityQuarantine): Promise<SecurityQuarantineEntry> {
+    const [created] = await db.insert(securityQuarantineQueue).values(entry).returning();
+    return created;
+  }
+
+  async getQuarantineEntries(reviewStatus?: string, limit: number = 100): Promise<SecurityQuarantineEntry[]> {
+    if (reviewStatus) {
+      return await db.select().from(securityQuarantineQueue)
+        .where(eq(securityQuarantineQueue.reviewStatus, reviewStatus))
+        .orderBy(desc(securityQuarantineQueue.createdAt))
+        .limit(limit);
+    }
+    return await db.select().from(securityQuarantineQueue)
+      .orderBy(desc(securityQuarantineQueue.createdAt))
+      .limit(limit);
+  }
+
+  async updateQuarantineReview(id: number, reviewStatus: string, reviewedBy: number): Promise<SecurityQuarantineEntry | undefined> {
+    const [updated] = await db.update(securityQuarantineQueue)
+      .set({ reviewStatus, reviewedBy, reviewedAt: new Date() })
+      .where(eq(securityQuarantineQueue.id, id))
+      .returning();
+    return updated;
+  }
+
+  // === Zero-Trust Security: National Audit Trail ===
+
+  async createNationalAuditEntry(entry: InsertNationalAuditTrail): Promise<NationalAuditTrailEntry> {
+    const [created] = await db.insert(nationalAuditTrail).values(entry).returning();
+    return created;
+  }
+
+  async getNationalAuditTrail(facilityScope?: string, limit: number = 100): Promise<NationalAuditTrailEntry[]> {
+    if (facilityScope) {
+      return await db.select().from(nationalAuditTrail)
+        .where(eq(nationalAuditTrail.facilityScope, facilityScope))
+        .orderBy(desc(nationalAuditTrail.createdAt))
+        .limit(limit);
+    }
+    return await db.select().from(nationalAuditTrail)
+      .orderBy(desc(nationalAuditTrail.createdAt))
+      .limit(limit);
+  }
+
+  async getNationalAuditByIdentity(identityUuid: string, limit: number = 100): Promise<NationalAuditTrailEntry[]> {
+    return await db.select().from(nationalAuditTrail)
+      .where(eq(nationalAuditTrail.identityUuid, identityUuid))
+      .orderBy(desc(nationalAuditTrail.createdAt))
+      .limit(limit);
   }
 }
 
