@@ -1,9 +1,10 @@
 import { storage } from "./storage";
 import { eventBus, EventTypes } from "./eventBus";
-import type { TestPolicy } from "@shared/schema";
-import type { ExecutionContext } from "./tenantScope";
-
-export type GovernanceOutcome = "ALLOW" | "WARN" | "REQUIRE_APPROVAL" | "BLOCK";
+import { TestPolicy } from "@shared/schema";
+import { ExecutionContext } from "./tenantScope";
+import { canOverride, blockAdminResultEdit } from "./governance/authorityChain";
+export type GovernanceOutcome =
+  "ALLOW" | "WARN" | "REQUIRE_APPROVAL" | "BLOCK";
 
 export interface GovernanceEvaluation {
   policyId: number;
@@ -114,6 +115,21 @@ async function persistGovernanceEventsPostCommit(
             advisory: evaluation.advisory,
           },
         });
+        if (
+  overallOutcome === "REQUIRE_APPROVAL" &&
+  executionContext?.actorRole === "PATHOLOGIST"
+) {
+  try {
+    await storage.createAuthorityChain({
+      sampleId: specimenId,
+      orderingUserId: emittedBy,
+      clinicalApproverId: emittedBy,
+      policyId: evaluation.policyId,
+      overrideReason: "PATHOLOGIST_OVERRIDE",
+      approvalTimestamp: new Date(),
+    });
+  } catch (_err) {}
+        }
       } catch (_err) {
       }
     }
@@ -138,15 +154,19 @@ async function persistGovernanceEventsPostCommit(
   }
 }
 
-export async function evaluateGovernance(
-  testCode: string,
-  sector: string,
-  patientId: number,
-  specimenId: number | null,
-  executionContext: ExecutionContext,
-  emittedBy: number | null,
-): Promise<GovernanceResult> {
-  const matchingPolicies = await storage.evaluateTestPolicies(testCode, sector);
+  export async function evaluateGovernance(
+    testCode: string,
+    sector: string,
+    patientId: number,
+    specimenId: number | null,
+    executionContext: ExecutionContext,
+    emittedBy: number | null,
+  ): Promise<GovernanceResult> {
+// === Administrative Authority Gate ===
+if ((executionContext as any)?.actorRole) {
+  blockAdminResultEdit((executionContext as any).actorRole);
+}
+    const matchingPolicies = await storage.evaluateTestPolicies(testCode, sector);
 
   const highRiskPolicies = matchingPolicies.filter(p => p.riskClass === "HIGH_RISK_BLOCK");
   const advisoryPolicies = matchingPolicies.filter(p => p.riskClass !== "HIGH_RISK_BLOCK");
@@ -157,6 +177,22 @@ export async function evaluateGovernance(
   }
 
   const overallOutcome = computeOverallOutcome(syncEvaluations);
+    // === Pathologist Override Gate ===
+if (overallOutcome === "REQUIRE_APPROVAL") {
+  if (executionContext?.actorRole && !canOverride(executionContext.actorRole)) {
+    throw new Error("Only PATHOLOGIST role can override clinical governance");
+  }
+}
+    // === Clinical Sovereign Lock ===
+if (overallOutcome === "REQUIRE_APPROVAL") {
+  const role = (executionContext as any)?.actorRole;
+
+  if (role && !canOverride(role)) {
+    throw new Error(
+      "Clinical approval required — only PATHOLOGIST can override"
+    );
+  }
+}
   const hasBlockingResults = syncEvaluations.some(
     e => e.outcome === "BLOCK" || e.outcome === "REQUIRE_APPROVAL" || e.outcome === "WARN"
   );
@@ -183,7 +219,16 @@ export async function evaluateGovernance(
       const allEvaluations = [...syncEvaluations, ...asyncEvaluations];
       const finalOutcome = computeOverallOutcome(allEvaluations);
       const finalAdvisoryOnly = allEvaluations.every(e => e.advisory);
-
+// === Pathologist Override Gate ===
+// === Pathologist Override Gate ===
+if (finalOutcome === "REQUIRE_APPROVAL") {
+  if (executionContext?.actorRole &&
+      !canOverride(executionContext.actorRole)) {
+    throw new Error(
+      "Only PATHOLOGIST role can override clinical governance"
+    );
+  }
+}
       await persistGovernanceEventsPostCommit(
         allEvaluations, specimenId, testCode, sector,
         executionContext, emittedBy,

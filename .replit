@@ -18,7 +18,7 @@ run = ["node", "./dist/index.cjs"]
 build = ["npm", "run", "build"]
 
 [workflows]
-runButton = "Project"
+runButton = "Start application"
 
 [[workflows.workflow]]
 name = "Project"
@@ -35,7 +35,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "npm run dev"
+args = "while true; do npm run dev; sleep 2; done"
 waitForPort = 5000
 
 [agent]
@@ -45,3 +45,4 @@ integrations = ["javascript_log_in_with_replit:2.0.0"]
 
 [userenv.shared]
 NATIONAL_ID_ENCRYPTION_KEY = "c7bc25010c3dba7949d9035d9b016363afdf258f56d403c00b29f1e697145dcc"
+

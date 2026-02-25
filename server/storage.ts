@@ -84,7 +84,7 @@ export interface IStorage {
   getStaffByReplitUserId(replitUserId: string): Promise<Staff | undefined>;
   createStaffMember(member: InsertStaff): Promise<Staff>;
   findOrCreateStaffByReplitUser(replitUserId: string, name: string): Promise<Staff>;
-
+createAuthorityChain(data: any): Promise<any>;
   // Patients (labId = null means no filter; used for MINISTRY_AUDITOR)
   getPatients(search?: string, labId?: number | null): Promise<Patient[]>;
   getPatient(id: number): Promise<Patient | undefined>;
@@ -2114,16 +2114,32 @@ export class DatabaseStorage implements IStorage {
   async getNationalFacilityByCode(facilityCode: string): Promise<NationalFacility | undefined> {
     const [found] = await db.select().from(nationalFacilities)
       .where(eq(nationalFacilities.facilityCode, facilityCode));
-    return found;
-  }
-
-  async updateNationalFacility(id: number, data: Partial<InsertNationalFacility>): Promise<NationalFacility | undefined> {
-    const [updated] = await db.update(nationalFacilities)
-      .set({ ...data, updatedAt: new Date() })
-      .where(eq(nationalFacilities.id, id))
-      .returning();
     return updated;
-  }
 }
 
-export const storage = new DatabaseStorage();
+// === Authority Chain (Pathologist Override) ===
+  async createAuthorityChain(data: {
+    sampleId?: number | null;
+    orderingUserId?: number | null;
+    clinicalApproverId?: number | null;
+    policyId: number;
+    overrideReason?: string;
+    approvalTimestamp?: Date;
+  }) {
+    try {
+      const [record] = await db.insert(authorityChain).values({
+        sampleId: data.sampleId ?? null,
+        orderingUserId: data.orderingUserId ?? null,
+        clinicalApproverId: data.clinicalApproverId ?? null,
+        policyId: data.policyId,
+        overrideReason: data.overrideReason ?? "PATHOLOGIST_OVERRIDE",
+        approvalTimestamp: data.approvalTimestamp ?? new Date(),
+      }).returning();
+
+      return record;
+    } catch (e) {
+      console.error("AuthorityChain insert failed", e);
+      return undefined;
+    }
+  }
+  export const storage = new DatabaseStorage();

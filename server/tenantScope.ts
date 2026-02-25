@@ -3,12 +3,14 @@ import type { Staff, ApiToken } from "@shared/schema";
 
 export type ExecutionContextSource = "user_session" | "analyzer_token" | "federation_source";
 
-export interface TenantScope {
-  labId: number | null;
-  bypass: boolean;
-  source: ExecutionContextSource;
-  sourceId: number | null;
-}
+  export interface TenantScope {
+    labId: number | null;
+    bypass: boolean;
+    source: ExecutionContextSource;
+    sourceId: number | null;
+    actorRole?: string;
+  }
+
 
 declare global {
   namespace Express {
@@ -28,7 +30,8 @@ export function attachTenantScope(req: any, _res: Response, next: NextFunction):
   if (staffMember.role === "ministry_auditor" || staffMember.role === "national_clinical_supervisor") {
     req.tenantScope = { labId: null, bypass: true, source: "user_session", sourceId: staffMember.id };
   } else {
-    req.tenantScope = { labId: staffMember.labId ?? null, bypass: false, source: "user_session", sourceId: staffMember.id };
+    req.tenantScope = { labId: staffMember.labId ?? null, bypass: false, source: "user_session", sourceId: staffMember.id
+,actorRole: staffMember.role,};
   }
   next();
 }
@@ -86,7 +89,16 @@ export function stampTenantLabId<T extends Record<string, any>>(scope: TenantSco
   return input;
 }
 
-export type ExecutionContext = "USER_SESSION" | "ANALYZER_SOURCE" | "FEDERATION_GATEWAY" | "OFFLINE_SYNC";
+export interface ExecutionContext {
+  source:
+    | "USER_SESSION"
+    | "ANALYZER_SOURCE"
+    | "FEDERATION_GATEWAY"
+    | "OFFLINE_SYNC";
+
+  actorId?: number | null;
+  actorRole?: string | null;
+}
 
 const SOURCE_TO_CONTEXT: Record<ExecutionContextSource, ExecutionContext> = {
   user_session: "USER_SESSION",
@@ -102,5 +114,9 @@ export function resolveExecutionContext(scope: TenantScope | undefined): Executi
   if (!ctx) {
     throw new Error(`Unknown tenant scope source: ${scope.source}`);
   }
-  return ctx;
+  return {
+  source: ctx,
+  actorId: scope.sourceId ?? null,
+  actorRole: (scope as any)?.actorRole ?? null,
+};
 }
