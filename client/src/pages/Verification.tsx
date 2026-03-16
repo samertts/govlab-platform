@@ -5,13 +5,14 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/StatusBadge";
 import { CheckCircle, AlertTriangle } from "lucide-react";
+import type { SampleWithPatient } from "@shared/schema";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 
 export default function Verification() {
   const { data: samples, isLoading } = useSamples("completed");
-  const [selectedSample, setSelectedSample] = useState<any>(null);
+  const [selectedSample, setSelectedSample] = useState<SampleWithPatient | null>(null);
 
   // Filter out fully verified samples if needed, but "completed" status implies results entered but not fully reported
   
@@ -31,7 +32,7 @@ export default function Verification() {
             No samples pending verification.
           </div>
         ) : (
-          samples?.map((sample: any) => (
+          samples?.map((sample: SampleWithPatient) => (
             <Card key={sample.id} className="border-l-4 border-l-amber-400 hover:shadow-md transition-all cursor-pointer" onClick={() => setSelectedSample(sample)}>
               <CardContent className="p-6 flex items-center justify-between">
                 <div>
@@ -41,7 +42,7 @@ export default function Verification() {
                 <div className="flex items-center gap-4">
                    <div className="text-right text-sm">
                      <p className="text-slate-900 font-medium">Entered By Tech</p>
-                     <p className="text-slate-500">{new Date(sample.collectionDate).toLocaleDateString()}</p>
+                     <p className="text-slate-500">{sample.collectionDate ? new Date(sample.collectionDate).toLocaleDateString() : "N/A"}</p>
                    </div>
                    <Button>Review</Button>
                 </div>
@@ -62,13 +63,13 @@ export default function Verification() {
   );
 }
 
-function VerificationModal({ sample, open, onOpenChange }: { sample: any, open: boolean, onOpenChange: (o: boolean) => void }) {
+function VerificationModal({ sample, open, onOpenChange }: { sample: SampleWithPatient, open: boolean, onOpenChange: (o: boolean) => void }) {
   const { mutate: verifyResult } = useVerifyResult();
   const { mutate: updateStatus } = useUpdateSampleStatus();
 
   const handleVerifyAll = () => {
     // Optimistic for demo: verify each result then update status
-    sample.results.forEach((r: any) => verifyResult(r.id));
+    sample.results.forEach((r) => verifyResult(r.id));
     updateStatus({ id: sample.id, status: "reported" });
     onOpenChange(false);
   };
@@ -99,7 +100,7 @@ function VerificationModal({ sample, open, onOpenChange }: { sample: any, open: 
           <div>
             <h4 className="text-xs font-bold uppercase text-slate-500 mb-2">Sample Details</h4>
             <div className="text-sm space-y-1">
-              <p>Collected: {new Date(sample.collectionDate).toLocaleString()}</p>
+              <p>Collected: {sample.collectionDate ? new Date(sample.collectionDate).toLocaleString() : "N/A"}</p>
               <p>Priority: {sample.priority}</p>
               <p>Clinical Notes: {sample.notes || "None"}</p>
             </div>
@@ -120,7 +121,7 @@ function VerificationModal({ sample, open, onOpenChange }: { sample: any, open: 
               </tr>
             </thead>
             <tbody className="divide-y">
-              {sample.results.map((result: any) => (
+              {sample.results.map((result) => (
                 <tr key={result.id} className="group hover:bg-slate-50">
                   <td className="py-3 pl-2 font-medium">{result.testType.name}</td>
                   <td className="py-3 font-mono font-semibold text-slate-900">{result.resultValue}</td>

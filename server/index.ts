@@ -5,6 +5,11 @@ import { createServer } from "http";
 
 const app = express();
 const httpServer = createServer(app);
+app.disable("x-powered-by");
+
+const inMemoryRateWindowMs = 60_000;
+const inMemoryRateLimit = 300;
+const ipRateCounter = new Map<string, { count: number; windowStart: number }>();
 
 declare module "http" {
   interface IncomingMessage {
@@ -14,13 +19,52 @@ declare module "http" {
 
 app.use(
   express.json({
+    limit: "1mb",
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
   }),
 );
 
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false, limit: "1mb" }));
+
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+  res.setHeader("Content-Security-Policy", "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https: wss:;");
+  next();
+});
+
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api")) return next();
+
+  const now = Date.now();
+  const key = req.ip || "unknown";
+  const current = ipRateCounter.get(key);
+  if (!current || now - current.windowStart > inMemoryRateWindowMs) {
+    ipRateCounter.set(key, { count: 1, windowStart: now });
+    return next();
+  }
+
+  current.count += 1;
+  if (current.count > inMemoryRateLimit) {
+    res.setHeader("Retry-After", String(Math.ceil((inMemoryRateWindowMs - (now - current.windowStart)) / 1000)));
+    return res.status(429).json({ message: "Too many requests" });
+  }
+
+  next();
+});
+
+setInterval(() => {
+  const now = Date.now();
+  ipRateCounter.forEach((record, ip) => {
+    if (now - record.windowStart > inMemoryRateWindowMs * 2) {
+      ipRateCounter.delete(ip);
+    }
+  });
+}, inMemoryRateWindowMs).unref();
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -36,21 +80,10 @@ export function log(message: string, source = "express") {
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
 
       log(logLine);
     }
