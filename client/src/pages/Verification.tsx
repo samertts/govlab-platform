@@ -31,7 +31,7 @@ export default function Verification() {
             No samples pending verification.
           </div>
         ) : (
-          samples?.map(sample => (
+          samples?.map((sample: any) => (
             <Card key={sample.id} className="border-l-4 border-l-amber-400 hover:shadow-md transition-all cursor-pointer" onClick={() => setSelectedSample(sample)}>
               <CardContent className="p-6 flex items-center justify-between">
                 <div>

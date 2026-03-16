@@ -42,7 +42,7 @@ export default function Accessioning() {
     });
   };
 
-  const selectedPatient = patients?.find(p => p.id === selectedPatientId);
+  const selectedPatient = patients?.find((p: any) => p.id === selectedPatientId);
 
   return (
     <div className="space-y-8 pb-10">
@@ -82,7 +82,7 @@ export default function Accessioning() {
 
             {!selectedPatient && searchTerm.length > 0 && (
               <div className="border rounded-lg overflow-hidden divide-y">
-                {patients?.slice(0, 5).map(patient => (
+                {patients?.slice(0, 5).map((patient: any) => (
                   <div 
                     key={patient.id} 
                     className="p-3 hover:bg-slate-50 cursor-pointer flex justify-between items-center transition-colors"
@@ -138,7 +138,7 @@ export default function Accessioning() {
                 <span>Estimated Cost:</span>
                 <span className="font-bold">
                   ${selectedTestIds.reduce((sum, id) => {
-                    const test = testTypes?.find(t => t.id === id);
+                    const test = testTypes?.find((t: any) => t.id === id);
                     return sum + (test?.price || 0);
                   }, 0) / 100}
                 </span>
@@ -166,7 +166,7 @@ export default function Accessioning() {
               <div className="p-8 text-center text-muted-foreground">Loading catalog...</div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {testTypes?.map(test => (
+                {testTypes?.map((test: any) => (
                   <div 
                     key={test.id} 
                     className={`
