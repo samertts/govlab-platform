@@ -3,7 +3,7 @@ import {
   staff, patients, testTypes, samples, testResults, auditLogs,
   organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems,
   labs, nationalReports, policyEngine, nationalAccessAudit, identityVerifications,
-  testPolicies, governanceEvents,
+  testPolicies, governanceEvents, authorityChain,
   clinicalPathways, pathwayRules, clinicalPathwayEvents,
   worklistView, nationalMetricsView, suggestionStreamView,
   unifiedSuggestionStream, notificationTemplates, notificationEvents, deliveryLogs, notifications, securityEvents,
@@ -23,6 +23,7 @@ import {
   type IdentityVerification, type InsertIdentityVerification,
   type TestPolicy, type InsertTestPolicy,
   type GovernanceEvent, type InsertGovernanceEvent,
+  type AuthorityChain, type InsertAuthorityChain,
   type ClinicalPathway, type InsertClinicalPathway,
   type PathwayRule, type InsertPathwayRule,
   type ClinicalPathwayEvent, type InsertClinicalPathwayEvent,
@@ -84,7 +85,7 @@ export interface IStorage {
   getStaffByReplitUserId(replitUserId: string): Promise<Staff | undefined>;
   createStaffMember(member: InsertStaff): Promise<Staff>;
   findOrCreateStaffByReplitUser(replitUserId: string, name: string): Promise<Staff>;
-createAuthorityChain(data: any): Promise<any>;
+  createAuthorityChain(data: InsertAuthorityChain): Promise<AuthorityChain>;
   // Patients (labId = null means no filter; used for MINISTRY_AUDITOR)
   getPatients(search?: string, labId?: number | null): Promise<Patient[]>;
   getPatient(id: number): Promise<Patient | undefined>;
@@ -2114,32 +2115,26 @@ export class DatabaseStorage implements IStorage {
   async getNationalFacilityByCode(facilityCode: string): Promise<NationalFacility | undefined> {
     const [found] = await db.select().from(nationalFacilities)
       .where(eq(nationalFacilities.facilityCode, facilityCode));
+    return found;
+  }
+
+  async updateNationalFacility(id: number, data: Partial<InsertNationalFacility>): Promise<NationalFacility | undefined> {
+    const [updated] = await db.update(nationalFacilities)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(nationalFacilities.id, id))
+      .returning();
     return updated;
+  }
+
+  // === Authority Chain (Pathologist Override) ===
+  async createAuthorityChain(data: InsertAuthorityChain): Promise<AuthorityChain> {
+    const [created] = await db.insert(authorityChain).values({
+      ...data,
+      overrideReason: data.overrideReason ?? "PATHOLOGIST_OVERRIDE",
+      approvalTimestamp: data.approvalTimestamp ?? new Date(),
+    }).returning();
+    return created;
+  }
 }
 
-// === Authority Chain (Pathologist Override) ===
-  async createAuthorityChain(data: {
-    sampleId?: number | null;
-    orderingUserId?: number | null;
-    clinicalApproverId?: number | null;
-    policyId: number;
-    overrideReason?: string;
-    approvalTimestamp?: Date;
-  }) {
-    try {
-      const [record] = await db.insert(authorityChain).values({
-        sampleId: data.sampleId ?? null,
-        orderingUserId: data.orderingUserId ?? null,
-        clinicalApproverId: data.clinicalApproverId ?? null,
-        policyId: data.policyId,
-        overrideReason: data.overrideReason ?? "PATHOLOGIST_OVERRIDE",
-        approvalTimestamp: data.approvalTimestamp ?? new Date(),
-      }).returning();
-
-      return record;
-    } catch (e) {
-      console.error("AuthorityChain insert failed", e);
-      return undefined;
-    }
-  }
-  export const storage = new DatabaseStorage();
+export const storage = new DatabaseStorage();

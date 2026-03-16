@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Search, Plus, UserPlus, Calendar } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { insertPatientSchema, type InsertPatient } from "@shared/schema";
+import { insertPatientSchema, type InsertPatient, type Patient } from "@shared/schema";
 import { format } from "date-fns";
 
 export default function Patients() {
@@ -74,7 +74,7 @@ export default function Patients() {
                 <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">No patients found</TableCell>
               </TableRow>
             ) : (
-              patients?.map((patient) => (
+              patients?.map((patient: Patient) => (
                 <TableRow key={patient.id} className="hover:bg-slate-50 cursor-pointer transition-colors">
                   <TableCell className="font-mono font-medium text-primary">{patient.mrn}</TableCell>
                   <TableCell className="font-semibold text-slate-900">{patient.lastName}, {patient.firstName}</TableCell>
