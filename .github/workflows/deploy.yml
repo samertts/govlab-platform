@@ -1,4 +1,4 @@
-name: GULA CI & Deploy
+name: Deploy GULA
 
 on:
   workflow_dispatch:
@@ -37,16 +37,23 @@ jobs:
     name: Deploy (manual only)
     needs: verify
     if: github.event_name == 'workflow_dispatch'
+
+jobs:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Compose config sanity check
-        run: docker compose config
+      - name: Validate build
+        run: |
+          npm ci
+          npm run check
+          npm run build
 
       - name: Bring stack up
-        run: docker compose up -d --build --remove-orphans
+        run: |
+          docker compose up -d --build --remove-orphans
 
       - name: Wait for health
         run: |
