@@ -17,7 +17,7 @@ export default function Worklist() {
   const [selectedSample, setSelectedSample] = useState<any>(null);
 
   // Filter samples client-side for this view
-  const filteredSamples = samples?.filter(s => {
+  const filteredSamples = samples?.filter((s: any) => {
     if (activeTab === "pending") return s.status !== "completed" && s.status !== "verified";
     return s.status === "completed" || s.status === "verified";
   });
@@ -44,7 +44,7 @@ export default function Worklist() {
             <p className="text-slate-500">No samples found in this category.</p>
           </div>
         ) : (
-          filteredSamples?.map(sample => (
+          filteredSamples?.map((sample: any) => (
             <Card key={sample.id} className="border shadow-sm hover:shadow-md transition-shadow">
               <CardContent className="p-0">
                 <div className="flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x">

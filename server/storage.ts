@@ -2114,10 +2114,18 @@ export class DatabaseStorage implements IStorage {
   async getNationalFacilityByCode(facilityCode: string): Promise<NationalFacility | undefined> {
     const [found] = await db.select().from(nationalFacilities)
       .where(eq(nationalFacilities.facilityCode, facilityCode));
-    return updated;
-}
+    return found;
+  }
 
-// === Authority Chain (Pathologist Override) ===
+  async updateNationalFacility(id: number, data: Partial<InsertNationalFacility>): Promise<NationalFacility | undefined> {
+    const [updated] = await db.update(nationalFacilities)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(nationalFacilities.id, id))
+      .returning();
+    return updated;
+  }
+
+  // === Authority Chain (Pathologist Override) ===
   async createAuthorityChain(data: {
     sampleId?: number | null;
     orderingUserId?: number | null;
@@ -2126,20 +2134,12 @@ export class DatabaseStorage implements IStorage {
     overrideReason?: string;
     approvalTimestamp?: Date;
   }) {
-    try {
-      const [record] = await db.insert(authorityChain).values({
-        sampleId: data.sampleId ?? null,
-        orderingUserId: data.orderingUserId ?? null,
-        clinicalApproverId: data.clinicalApproverId ?? null,
-        policyId: data.policyId,
-        overrideReason: data.overrideReason ?? "PATHOLOGIST_OVERRIDE",
-        approvalTimestamp: data.approvalTimestamp ?? new Date(),
-      }).returning();
-
-      return record;
-    } catch (e) {
-      console.error("AuthorityChain insert failed", e);
-      return undefined;
-    }
+    return {
+      ...data,
+      overrideReason: data.overrideReason ?? "PATHOLOGIST_OVERRIDE",
+      approvalTimestamp: data.approvalTimestamp ?? new Date(),
+    };
   }
-  export const storage = new DatabaseStorage();
+}
+
+export const storage = new DatabaseStorage();
