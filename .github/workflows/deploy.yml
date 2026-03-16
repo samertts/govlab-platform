@@ -1,0 +1,75 @@
+name: GULA CI & Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+  pull_request:
+
+concurrency:
+  group: gula-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify build and type safety
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run check
+
+      - name: Production build
+        run: npm run build
+
+  deploy:
+    name: Deploy (manual only)
+    needs: verify
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compose config sanity check
+        run: docker compose config
+
+      - name: Bring stack up
+        run: docker compose up -d --build --remove-orphans
+
+      - name: Wait for health
+        run: |
+          for i in {1..40}; do
+            if curl -fsS --max-time 5 http://localhost/api/healthz >/dev/null; then
+              echo "Health check passed"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "Health check failed"
+          exit 1
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --tail=200 nginx app
+
+      - name: Attempt auto-fix rollback path
+        if: failure()
+        run: |
+          bash ops/gula_autofix.sh || true
+          docker compose ps
+          docker compose logs --tail=200 nginx app
+          exit 1

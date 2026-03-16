@@ -100,7 +100,7 @@ export interface ExecutionContext {
   actorRole?: string | null;
 }
 
-const SOURCE_TO_CONTEXT: Record<ExecutionContextSource, ExecutionContext> = {
+const SOURCE_TO_CONTEXT: Record<ExecutionContextSource, ExecutionContext["source"]> = {
   user_session: "USER_SESSION",
   analyzer_token: "ANALYZER_SOURCE",
   federation_source: "FEDERATION_GATEWAY",

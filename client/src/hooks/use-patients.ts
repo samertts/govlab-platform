@@ -1,10 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import type { InsertPatient } from "@shared/schema";
+import type { InsertPatient, Patient } from "@shared/schema";
 
 export function usePatients(search?: string) {
-  return useQuery({
+  return useQuery<Patient[]>({
     queryKey: [api.patients.list.path, search],
     queryFn: async () => {
       const url = search 
@@ -19,7 +19,7 @@ export function usePatients(search?: string) {
 }
 
 export function usePatient(id: number) {
-  return useQuery({
+  return useQuery<Patient>({
     queryKey: [api.patients.get.path, id],
     queryFn: async () => {
       const url = buildUrl(api.patients.get.path, { id });

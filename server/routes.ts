@@ -10,6 +10,48 @@ import { attachTenantScope, getTenantLabFilter, enforceTenantOwnership, stampTen
 import { blockWriteForOversightRoles } from "./oversightGuard";
 import { sessionAnomalyDetector, cleanupStaleSessions } from "./securityGuardrails";
 
+type AppRole = "master_admin" | "lab_admin" | "lab_staff" | "doctor" | "citizen" | "auditor";
+
+type Permission =
+  | "patients:read"
+  | "patients:write"
+  | "tests:read"
+  | "tests:write"
+  | "samples:read"
+  | "samples:write"
+  | "results:read"
+  | "results:write"
+  | "results:verify"
+  | "staff:read";
+
+const ROLE_ALIASES: Record<string, AppRole> = {
+  admin: "master_admin",
+  master_admin: "master_admin",
+  lab_admin: "lab_admin",
+  technician: "lab_staff",
+  lab_staff: "lab_staff",
+  pathologist: "doctor",
+  doctor: "doctor",
+  citizen: "citizen",
+  ministry_auditor: "auditor",
+  national_clinical_supervisor: "auditor",
+};
+
+const ROLE_PERMISSIONS: Record<AppRole, Permission[]> = {
+  master_admin: ["patients:read", "patients:write", "tests:read", "tests:write", "samples:read", "samples:write", "results:read", "results:write", "results:verify", "staff:read"],
+  lab_admin: ["patients:read", "patients:write", "tests:read", "tests:write", "samples:read", "samples:write", "results:read", "results:write", "results:verify", "staff:read"],
+  lab_staff: ["patients:read", "patients:write", "tests:read", "samples:read", "samples:write", "results:read", "results:write", "staff:read"],
+  doctor: ["patients:read", "patients:write", "tests:read", "samples:read", "samples:write", "results:read", "results:write", "results:verify", "staff:read"],
+  citizen: [],
+  auditor: ["patients:read", "tests:read", "samples:read", "results:read", "staff:read"],
+};
+
+function normalizeRole(rawRole: string | null | undefined): AppRole {
+  const key = String(rawRole || "").trim().toLowerCase();
+  return ROLE_ALIASES[key] || "citizen";
+}
+
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -20,7 +62,7 @@ export async function registerRoutes(
 
   // === PASSIVE SECURITY GUARDRAILS ===
   app.use("/api/", sessionAnomalyDetector);
-  setInterval(cleanupStaleSessions, 300_000);
+  setInterval(cleanupStaleSessions, 300_000).unref();
 
   // === SOVEREIGN PILOT ROUTES ===
   registerSovereignRoutes(app);
@@ -42,14 +84,26 @@ export async function registerRoutes(
     });
   };
 
+
+  const requirePermission = (permission: Permission) => (req: any, res: any, next: any) => {
+    const role = normalizeRole(req.staffMember?.role);
+    const allowed = ROLE_PERMISSIONS[role]?.includes(permission);
+    if (!allowed) {
+      return res.status(403).json({ message: "Forbidden: insufficient permissions" });
+    }
+    return next();
+  };
+
   // Patients
-  app.get(api.patients.list.path, requireAuth, async (req: any, res) => {
+  app.get(api.patients.list.path, requireAuth, requirePermission("patients:read"), async (req: any, res) => {
     const labFilter = getTenantLabFilter(req.tenantScope);
-    const patients = await storage.getPatients(req.query.search as string, labFilter);
+    const limit = Math.min(Number(req.query.limit) || 100, 200);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const patients = await storage.getPatients(req.query.search as string, labFilter, limit, offset);
     res.json(patients);
   });
 
-  app.get(api.patients.get.path, requireAuth, async (req: any, res) => {
+  app.get(api.patients.get.path, requireAuth, requirePermission("patients:read"), async (req: any, res) => {
     const patient = await storage.getPatient(Number(req.params.id));
     if (!patient) return res.status(404).json({ message: "Patient not found" });
     if (!enforceTenantOwnership(req.tenantScope, patient.labId)) {
@@ -58,7 +112,7 @@ export async function registerRoutes(
     res.json(patient);
   });
 
-  app.post(api.patients.create.path, requireAuth, blockWriteForOversightRoles, async (req: any, res) => {
+  app.post(api.patients.create.path, requireAuth, requirePermission("patients:write"), blockWriteForOversightRoles, async (req: any, res) => {
     try {
       const input = stampTenantLabId(req.tenantScope, api.patients.create.input.parse(req.body));
       const patient = await storage.createPatient(input);
@@ -71,7 +125,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put(api.patients.update.path, requireAuth, blockWriteForOversightRoles, async (req, res) => {
+  app.put(api.patients.update.path, requireAuth, requirePermission("patients:write"), blockWriteForOversightRoles, async (req, res) => {
     try {
       const input = api.patients.update.input.parse(req.body);
       const patient = await storage.updatePatient(Number(req.params.id), input);
@@ -86,12 +140,12 @@ export async function registerRoutes(
   });
 
   // Test Types
-  app.get(api.testTypes.list.path, requireAuth, async (req, res) => {
+  app.get(api.testTypes.list.path, requireAuth, requirePermission("tests:read"), async (req, res) => {
     const tests = await storage.getTestTypes();
     res.json(tests);
   });
 
-  app.post(api.testTypes.create.path, requireAuth, blockWriteForOversightRoles, async (req, res) => {
+  app.post(api.testTypes.create.path, requireAuth, requirePermission("tests:write"), blockWriteForOversightRoles, async (req, res) => {
     try {
       const input = api.testTypes.create.input.parse(req.body);
       const test = await storage.createTestType(input);
@@ -105,15 +159,17 @@ export async function registerRoutes(
   });
 
   // Samples
-  app.get(api.samples.list.path, requireAuth, async (req: any, res) => {
+  app.get(api.samples.list.path, requireAuth, requirePermission("samples:read"), async (req: any, res) => {
     const status = req.query.status as string;
     const patientId = req.query.patientId ? Number(req.query.patientId) : undefined;
     const labFilter = getTenantLabFilter(req.tenantScope);
-    const samples = await storage.getSamples(status, patientId, labFilter);
+    const limit = Math.min(Number(req.query.limit) || 100, 200);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const samples = await storage.getSamples(status, patientId, labFilter, limit, offset);
     res.json(samples);
   });
 
-  app.get(api.samples.get.path, requireAuth, async (req: any, res) => {
+  app.get(api.samples.get.path, requireAuth, requirePermission("samples:read"), async (req: any, res) => {
     const sample = await storage.getSample(Number(req.params.id));
     if (!sample) return res.status(404).json({ message: "Sample not found" });
     if (!enforceTenantOwnership(req.tenantScope, sample.labId)) {
@@ -122,7 +178,7 @@ export async function registerRoutes(
     res.json(sample);
   });
 
-  app.post(api.samples.create.path, requireAuth, blockWriteForOversightRoles, async (req: any, res) => {
+  app.post(api.samples.create.path, requireAuth, requirePermission("samples:write"), blockWriteForOversightRoles, async (req: any, res) => {
     try {
       const input = stampTenantLabId(req.tenantScope, api.samples.create.input.parse(req.body));
       const sample = await storage.createSample(input);
@@ -144,19 +200,19 @@ export async function registerRoutes(
     }
   });
 
-  app.patch(api.samples.updateStatus.path, requireAuth, blockWriteForOversightRoles, async (req, res) => {
+  app.patch(api.samples.updateStatus.path, requireAuth, requirePermission("samples:write"), blockWriteForOversightRoles, async (req, res) => {
     const sample = await storage.updateSampleStatus(Number(req.params.id), req.body.status);
     if (!sample) return res.status(404).json({ message: "Sample not found" });
     res.json(sample);
   });
 
   // Results
-  app.get(api.results.listAuditLogs.path, requireAuth, async (req, res) => {
+  app.get(api.results.listAuditLogs.path, requireAuth, requirePermission("results:read"), async (req, res) => {
     const logs = await storage.getAuditLogsByResult(Number(req.params.id));
     res.json(logs);
   });
 
-  app.patch(api.results.update.path, requireAuth, blockWriteForOversightRoles, async (req: any, res) => {
+  app.patch(api.results.update.path, requireAuth, requirePermission("results:write"), blockWriteForOversightRoles, async (req: any, res) => {
     try {
       const input = api.results.update.input.parse(req.body);
       const staffMember: Staff = req.staffMember;
@@ -188,7 +244,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post(api.results.verify.path, requireAuth, blockWriteForOversightRoles, async (req: any, res) => {
+  app.post(api.results.verify.path, requireAuth, requirePermission("results:verify"), blockWriteForOversightRoles, async (req: any, res) => {
     const staffMember: Staff = req.staffMember;
     if (!staffMember) return res.sendStatus(401);
     
@@ -209,8 +265,12 @@ export async function registerRoutes(
     res.json(result);
   });
 
+  app.get("/api/healthz", (_req, res) => {
+    res.json({ status: "ok", uptimeSec: Math.floor(process.uptime()) });
+  });
+
   // Staff info endpoint
-  app.get("/api/staff/me", requireAuth, async (req: any, res) => {
+  app.get("/api/staff/me", requireAuth, requirePermission("staff:read"), async (req: any, res) => {
     res.json(req.staffMember);
   });
 
@@ -268,7 +328,11 @@ export async function registerRoutes(
     }
   }
 
-  seed();
+  if (process.env.NODE_ENV !== "production") {
+    seed().catch((err) => {
+      console.error("Seed failed", err);
+    });
+  }
 
   return httpServer;
 }

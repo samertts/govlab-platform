@@ -4,14 +4,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Activity, Clock, FileCheck, FlaskConical, AlertCircle } from "lucide-react";
 import { StatusBadge } from "@/components/StatusBadge";
 import { format } from "date-fns";
+import type { SampleWithPatient } from "@shared/schema";
 
 export default function Dashboard() {
   const { data: samples, isLoading } = useSamples();
 
   const stats = [
-    { label: "Pending Tests", value: samples?.filter(s => s.status !== "completed").length || 0, icon: Clock, color: "text-amber-500", bg: "bg-amber-50" },
-    { label: "Completed Today", value: samples?.filter(s => s.status === "completed").length || 0, icon: FileCheck, color: "text-green-500", bg: "bg-green-50" },
-    { label: "Urgent/STAT", value: samples?.filter(s => s.priority !== "routine").length || 0, icon: AlertCircle, color: "text-red-500", bg: "bg-red-50" },
+    { label: "Pending Tests", value: samples?.filter((s: SampleWithPatient) => s.status !== "completed").length || 0, icon: Clock, color: "text-amber-500", bg: "bg-amber-50" },
+    { label: "Completed Today", value: samples?.filter((s: SampleWithPatient) => s.status === "completed").length || 0, icon: FileCheck, color: "text-green-500", bg: "bg-green-50" },
+    { label: "Urgent/STAT", value: samples?.filter((s: SampleWithPatient) => s.priority !== "routine").length || 0, icon: AlertCircle, color: "text-red-500", bg: "bg-red-50" },
     { label: "Total Accessions", value: samples?.length || 0, icon: FlaskConical, color: "text-blue-500", bg: "bg-blue-50" },
   ];
 
@@ -50,7 +51,7 @@ export default function Dashboard() {
             <div className="space-y-4">
               {isLoading ? (
                 <div className="h-40 flex items-center justify-center text-muted-foreground">Loading...</div>
-              ) : samples?.slice(0, 5).map((sample) => (
+              ) : samples?.slice(0, 5).map((sample: SampleWithPatient) => (
                 <div key={sample.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-100">
                   <div className="flex items-center gap-4">
                     <div className="h-10 w-10 rounded-full bg-white border flex items-center justify-center font-bold text-slate-700 shadow-sm">
@@ -62,7 +63,7 @@ export default function Dashboard() {
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                    <StatusBadge status={sample.priority} />
+                    <StatusBadge status={sample.priority ?? "routine"} />
                     <StatusBadge status={sample.status} />
                   </div>
                 </div>
