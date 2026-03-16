@@ -1,0 +1,49 @@
+name: Deploy GULA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate build
+        run: |
+          npm ci
+          npm run check
+          npm run build
+
+      - name: Bring stack up
+        run: |
+          docker compose up -d --build --remove-orphans
+
+      - name: Wait for health
+        run: |
+          for i in {1..40}; do
+            if curl -fsS --max-time 5 http://localhost/api/healthz >/dev/null; then
+              echo "Health check passed"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "Health check failed"
+          exit 1
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --tail=200 nginx app
+
+      - name: Attempt auto-fix rollback path
+        if: failure()
+        run: |
+          bash ops/gula_autofix.sh || true
+          docker compose ps
+          docker compose logs --tail=200 nginx app
+          exit 1

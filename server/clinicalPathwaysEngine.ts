@@ -148,7 +148,7 @@ async function persistPathwayEventsPostCommit(
         specimenId,
         pathwayId: suggestion.pathwayId,
         suggestionLevel: suggestion.suggestionLevel,
-        executionContext,
+        executionContext: executionContext.source,
         metadata: {
           pathwayName: suggestion.pathwayName,
           triggerTest: suggestion.triggerTest,

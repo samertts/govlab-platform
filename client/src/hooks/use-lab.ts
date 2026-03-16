@@ -1,11 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import type { InsertSample, InsertTestType } from "@shared/schema";
+import type { InsertSample, TestType, SampleWithPatient, TestResult } from "@shared/schema";
 
 // === TEST TYPES ===
 export function useTestTypes() {
-  return useQuery({
+  return useQuery<TestType[]>({
     queryKey: [api.testTypes.list.path],
     queryFn: async () => {
       const res = await fetch(api.testTypes.list.path);
@@ -17,7 +17,7 @@ export function useTestTypes() {
 
 // === SAMPLES ===
 export function useSamples(status?: string, patientId?: number) {
-  return useQuery({
+  return useQuery<SampleWithPatient[]>({
     queryKey: [api.samples.list.path, status, patientId],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -33,7 +33,7 @@ export function useSamples(status?: string, patientId?: number) {
 }
 
 export function useSample(id: number) {
-  return useQuery({
+  return useQuery<SampleWithPatient>({
     queryKey: [api.samples.get.path, id],
     queryFn: async () => {
       const url = buildUrl(api.samples.get.path, { id });
@@ -97,7 +97,7 @@ export function useUpdateResult() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  return useMutation({
+  return useMutation<TestResult, Error, { id: number; resultValue: string; notes?: string }>({
     mutationFn: async ({ id, resultValue, notes }: { id: number; resultValue: string; notes?: string }) => {
       const url = buildUrl(api.results.update.path, { id });
       const res = await fetch(url, {
