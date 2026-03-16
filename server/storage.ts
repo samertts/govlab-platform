@@ -87,7 +87,7 @@ export interface IStorage {
   findOrCreateStaffByReplitUser(replitUserId: string, name: string): Promise<Staff>;
   createAuthorityChain(data: InsertAuthorityChain): Promise<AuthorityChain>;
   // Patients (labId = null means no filter; used for MINISTRY_AUDITOR)
-  getPatients(search?: string, labId?: number | null): Promise<Patient[]>;
+  getPatients(search?: string, labId?: number | null, limit?: number, offset?: number): Promise<Patient[]>;
   getPatient(id: number): Promise<Patient | undefined>;
   createPatient(patient: InsertPatient): Promise<Patient>;
   updatePatient(id: number, patient: UpdatePatientRequest): Promise<Patient | undefined>;
@@ -97,7 +97,7 @@ export interface IStorage {
   createTestType(testType: InsertTestType): Promise<TestType>;
 
   // Samples (labId filtering for multi-tenancy)
-  getSamples(status?: string, patientId?: number, labId?: number | null): Promise<SampleWithPatient[]>;
+  getSamples(status?: string, patientId?: number, labId?: number | null, limit?: number, offset?: number): Promise<SampleWithPatient[]>;
   getSample(id: number): Promise<SampleWithPatient | undefined>;
   createSample(sample: InsertSample): Promise<Sample>;
   updateSampleStatus(id: number, status: string): Promise<Sample | undefined>;
@@ -413,7 +413,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Patients
-  async getPatients(search?: string, labId?: number | null): Promise<Patient[]> {
+  async getPatients(search?: string, labId?: number | null, limit = 100, offset = 0): Promise<Patient[]> {
     const conditions = [];
     if (search) {
       const lowerSearch = search.toLowerCase();
@@ -425,9 +425,9 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(patients.labId, labId));
     }
     if (conditions.length > 0) {
-      return await db.select().from(patients).where(and(...conditions)).orderBy(desc(patients.createdAt));
+      return await db.select().from(patients).where(and(...conditions)).orderBy(desc(patients.createdAt)).limit(Math.min(limit, 200)).offset(Math.max(offset, 0));
     }
-    return await db.select().from(patients).orderBy(desc(patients.createdAt));
+    return await db.select().from(patients).orderBy(desc(patients.createdAt)).limit(Math.min(limit, 200)).offset(Math.max(offset, 0));
   }
 
   async getPatient(id: number): Promise<Patient | undefined> {
@@ -456,7 +456,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Samples
-  async getSamples(status?: string, patientId?: number, labId?: number | null): Promise<SampleWithPatient[]> {
+  async getSamples(status?: string, patientId?: number, labId?: number | null, limit = 100, offset = 0): Promise<SampleWithPatient[]> {
     const conditions = [];
     if (status) conditions.push(eq(samples.status, status));
     if (patientId) conditions.push(eq(samples.patientId, patientId));
@@ -469,7 +469,9 @@ export class DatabaseStorage implements IStorage {
     .from(samples)
     .innerJoin(patients, eq(samples.patientId, patients.id))
     .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(desc(samples.createdAt));
+    .orderBy(desc(samples.createdAt))
+    .limit(Math.min(limit, 200))
+    .offset(Math.max(offset, 0));
     
     const result = await Promise.all(rows.map(async (row) => {
       const results = await this.getTestResultsBySample(row.sample.id);

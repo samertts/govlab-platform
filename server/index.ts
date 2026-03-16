@@ -11,6 +11,22 @@ const inMemoryRateWindowMs = 60_000;
 const inMemoryRateLimit = 300;
 const ipRateCounter = new Map<string, { count: number; windowStart: number }>();
 
+const stateChangingMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+function isTrustedOrigin(req: Request): boolean {
+  const origin = req.get("origin");
+  if (!origin) return true;
+  const host = req.get("host");
+  if (!host) return false;
+  try {
+    const parsed = new URL(origin);
+    return parsed.host === host;
+  } catch {
+    return false;
+  }
+}
+
+
 declare module "http" {
   interface IncomingMessage {
     rawBody: unknown;
@@ -35,6 +51,16 @@ app.use((req, res, next) => {
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
   res.setHeader("Content-Security-Policy", "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https: wss:;");
   next();
+});
+
+
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api")) return next();
+  if (!stateChangingMethods.has(req.method)) return next();
+  if (!isTrustedOrigin(req)) {
+    return res.status(403).json({ message: "Invalid request origin" });
+  }
+  return next();
 });
 
 app.use((req, res, next) => {
