@@ -295,6 +295,19 @@ export const governanceEvents = pgTable("governance_events", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// === CLINICAL GOVERNANCE ENGINE: AUTHORITY CHAIN (OVERRIDES) ===
+
+export const authorityChain = pgTable("authority_chain", {
+  id: serial("id").primaryKey(),
+  sampleId: integer("sample_id").references(() => samples.id),
+  orderingUserId: integer("ordering_user_id").references(() => staff.id),
+  clinicalApproverId: integer("clinical_approver_id").references(() => staff.id),
+  policyId: integer("policy_id").references(() => testPolicies.id).notNull(),
+  overrideReason: text("override_reason").notNull().default("PATHOLOGIST_OVERRIDE"),
+  approvalTimestamp: timestamp("approval_timestamp").defaultNow().notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // === CLINICAL PATHWAYS ENGINE: PATHWAY DEFINITIONS ===
 
 export const clinicalPathways = pgTable("clinical_pathways", {
@@ -813,6 +826,7 @@ export const insertNationalAccessAuditSchema = createInsertSchema(nationalAccess
 export const insertIdentityVerificationSchema = createInsertSchema(identityVerifications).omit({ id: true, createdAt: true });
 export const insertTestPolicySchema = createInsertSchema(testPolicies).omit({ id: true, createdAt: true });
 export const insertGovernanceEventSchema = createInsertSchema(governanceEvents).omit({ id: true, createdAt: true });
+export const insertAuthorityChainSchema = createInsertSchema(authorityChain).omit({ id: true, createdAt: true });
 export const insertClinicalPathwaySchema = createInsertSchema(clinicalPathways).omit({ id: true, createdAt: true });
 export const insertPathwayRuleSchema = createInsertSchema(pathwayRules).omit({ id: true, createdAt: true });
 export const insertClinicalPathwayEventSchema = createInsertSchema(clinicalPathwayEvents).omit({ id: true, createdAt: true });
@@ -959,6 +973,7 @@ export type NationalAccessAuditEntry = typeof nationalAccessAudit.$inferSelect;
 export type IdentityVerification = typeof identityVerifications.$inferSelect;
 export type TestPolicy = typeof testPolicies.$inferSelect;
 export type GovernanceEvent = typeof governanceEvents.$inferSelect;
+export type AuthorityChain = typeof authorityChain.$inferSelect;
 export type ClinicalPathway = typeof clinicalPathways.$inferSelect;
 export type PathwayRule = typeof pathwayRules.$inferSelect;
 export type ClinicalPathwayEvent = typeof clinicalPathwayEvents.$inferSelect;
@@ -1028,6 +1043,7 @@ export type InsertNationalAccessAudit = z.infer<typeof insertNationalAccessAudit
 export type InsertIdentityVerification = z.infer<typeof insertIdentityVerificationSchema>;
 export type InsertTestPolicy = z.infer<typeof insertTestPolicySchema>;
 export type InsertGovernanceEvent = z.infer<typeof insertGovernanceEventSchema>;
+export type InsertAuthorityChain = z.infer<typeof insertAuthorityChainSchema>;
 export type InsertClinicalPathway = z.infer<typeof insertClinicalPathwaySchema>;
 export type InsertPathwayRule = z.infer<typeof insertPathwayRuleSchema>;
 export type InsertClinicalPathwayEvent = z.infer<typeof insertClinicalPathwayEventSchema>;

@@ -3,7 +3,7 @@ import {
   staff, patients, testTypes, samples, testResults, auditLogs,
   organizations, directorates, facilities, apiTokens, events, offlineQueue, invoices, invoiceItems,
   labs, nationalReports, policyEngine, nationalAccessAudit, identityVerifications,
-  testPolicies, governanceEvents,
+  testPolicies, governanceEvents, authorityChain,
   clinicalPathways, pathwayRules, clinicalPathwayEvents,
   worklistView, nationalMetricsView, suggestionStreamView,
   unifiedSuggestionStream, notificationTemplates, notificationEvents, deliveryLogs, notifications, securityEvents,
@@ -23,6 +23,7 @@ import {
   type IdentityVerification, type InsertIdentityVerification,
   type TestPolicy, type InsertTestPolicy,
   type GovernanceEvent, type InsertGovernanceEvent,
+  type AuthorityChain, type InsertAuthorityChain,
   type ClinicalPathway, type InsertClinicalPathway,
   type PathwayRule, type InsertPathwayRule,
   type ClinicalPathwayEvent, type InsertClinicalPathwayEvent,
@@ -84,9 +85,9 @@ export interface IStorage {
   getStaffByReplitUserId(replitUserId: string): Promise<Staff | undefined>;
   createStaffMember(member: InsertStaff): Promise<Staff>;
   findOrCreateStaffByReplitUser(replitUserId: string, name: string): Promise<Staff>;
-createAuthorityChain(data: any): Promise<any>;
+  createAuthorityChain(data: InsertAuthorityChain): Promise<AuthorityChain>;
   // Patients (labId = null means no filter; used for MINISTRY_AUDITOR)
-  getPatients(search?: string, labId?: number | null): Promise<Patient[]>;
+  getPatients(search?: string, labId?: number | null, limit?: number, offset?: number): Promise<Patient[]>;
   getPatient(id: number): Promise<Patient | undefined>;
   createPatient(patient: InsertPatient): Promise<Patient>;
   updatePatient(id: number, patient: UpdatePatientRequest): Promise<Patient | undefined>;
@@ -96,7 +97,7 @@ createAuthorityChain(data: any): Promise<any>;
   createTestType(testType: InsertTestType): Promise<TestType>;
 
   // Samples (labId filtering for multi-tenancy)
-  getSamples(status?: string, patientId?: number, labId?: number | null): Promise<SampleWithPatient[]>;
+  getSamples(status?: string, patientId?: number, labId?: number | null, limit?: number, offset?: number): Promise<SampleWithPatient[]>;
   getSample(id: number): Promise<SampleWithPatient | undefined>;
   createSample(sample: InsertSample): Promise<Sample>;
   updateSampleStatus(id: number, status: string): Promise<Sample | undefined>;
@@ -412,7 +413,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Patients
-  async getPatients(search?: string, labId?: number | null): Promise<Patient[]> {
+  async getPatients(search?: string, labId?: number | null, limit = 100, offset = 0): Promise<Patient[]> {
     const conditions = [];
     if (search) {
       const lowerSearch = search.toLowerCase();
@@ -424,9 +425,9 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(patients.labId, labId));
     }
     if (conditions.length > 0) {
-      return await db.select().from(patients).where(and(...conditions)).orderBy(desc(patients.createdAt));
+      return await db.select().from(patients).where(and(...conditions)).orderBy(desc(patients.createdAt)).limit(Math.min(limit, 200)).offset(Math.max(offset, 0));
     }
-    return await db.select().from(patients).orderBy(desc(patients.createdAt));
+    return await db.select().from(patients).orderBy(desc(patients.createdAt)).limit(Math.min(limit, 200)).offset(Math.max(offset, 0));
   }
 
   async getPatient(id: number): Promise<Patient | undefined> {
@@ -455,7 +456,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Samples
-  async getSamples(status?: string, patientId?: number, labId?: number | null): Promise<SampleWithPatient[]> {
+  async getSamples(status?: string, patientId?: number, labId?: number | null, limit = 100, offset = 0): Promise<SampleWithPatient[]> {
     const conditions = [];
     if (status) conditions.push(eq(samples.status, status));
     if (patientId) conditions.push(eq(samples.patientId, patientId));
@@ -468,7 +469,9 @@ export class DatabaseStorage implements IStorage {
     .from(samples)
     .innerJoin(patients, eq(samples.patientId, patients.id))
     .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(desc(samples.createdAt));
+    .orderBy(desc(samples.createdAt))
+    .limit(Math.min(limit, 200))
+    .offset(Math.max(offset, 0));
     
     const result = await Promise.all(rows.map(async (row) => {
       const results = await this.getTestResultsBySample(row.sample.id);
@@ -2114,32 +2117,26 @@ export class DatabaseStorage implements IStorage {
   async getNationalFacilityByCode(facilityCode: string): Promise<NationalFacility | undefined> {
     const [found] = await db.select().from(nationalFacilities)
       .where(eq(nationalFacilities.facilityCode, facilityCode));
+    return found;
+  }
+
+  async updateNationalFacility(id: number, data: Partial<InsertNationalFacility>): Promise<NationalFacility | undefined> {
+    const [updated] = await db.update(nationalFacilities)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(nationalFacilities.id, id))
+      .returning();
     return updated;
+  }
+
+  // === Authority Chain (Pathologist Override) ===
+  async createAuthorityChain(data: InsertAuthorityChain): Promise<AuthorityChain> {
+    const [created] = await db.insert(authorityChain).values({
+      ...data,
+      overrideReason: data.overrideReason ?? "PATHOLOGIST_OVERRIDE",
+      approvalTimestamp: data.approvalTimestamp ?? new Date(),
+    }).returning();
+    return created;
+  }
 }
 
-// === Authority Chain (Pathologist Override) ===
-  async createAuthorityChain(data: {
-    sampleId?: number | null;
-    orderingUserId?: number | null;
-    clinicalApproverId?: number | null;
-    policyId: number;
-    overrideReason?: string;
-    approvalTimestamp?: Date;
-  }) {
-    try {
-      const [record] = await db.insert(authorityChain).values({
-        sampleId: data.sampleId ?? null,
-        orderingUserId: data.orderingUserId ?? null,
-        clinicalApproverId: data.clinicalApproverId ?? null,
-        policyId: data.policyId,
-        overrideReason: data.overrideReason ?? "PATHOLOGIST_OVERRIDE",
-        approvalTimestamp: data.approvalTimestamp ?? new Date(),
-      }).returning();
-
-      return record;
-    } catch (e) {
-      console.error("AuthorityChain insert failed", e);
-      return undefined;
-    }
-  }
-  export const storage = new DatabaseStorage();
+export const storage = new DatabaseStorage();

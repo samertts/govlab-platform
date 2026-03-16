@@ -107,7 +107,7 @@ async function persistGovernanceEventsPostCommit(
           testCode,
           policyId: evaluation.policyId,
           evaluationResult: evaluation.outcome,
-          executionContext,
+          executionContext: executionContext.source,
           metadata: {
             ruleType: evaluation.ruleType,
             riskClass: evaluation.riskClass,

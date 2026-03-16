@@ -9,15 +9,15 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Loader2, Save } from "lucide-react";
-import type { TestResult } from "@shared/schema";
+import type { SampleWithPatient } from "@shared/schema";
 
 export default function Worklist() {
   const [activeTab, setActiveTab] = useState("pending"); // pending | completed
   const { data: samples, isLoading } = useSamples();
-  const [selectedSample, setSelectedSample] = useState<any>(null);
+  const [selectedSample, setSelectedSample] = useState<SampleWithPatient | null>(null);
 
   // Filter samples client-side for this view
-  const filteredSamples = samples?.filter(s => {
+  const filteredSamples = samples?.filter((s) => {
     if (activeTab === "pending") return s.status !== "completed" && s.status !== "verified";
     return s.status === "completed" || s.status === "verified";
   });
@@ -44,7 +44,7 @@ export default function Worklist() {
             <p className="text-slate-500">No samples found in this category.</p>
           </div>
         ) : (
-          filteredSamples?.map(sample => (
+          filteredSamples?.map((sample) => (
             <Card key={sample.id} className="border shadow-sm hover:shadow-md transition-shadow">
               <CardContent className="p-0">
                 <div className="flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x">
@@ -57,7 +57,7 @@ export default function Worklist() {
                         </h3>
                         <p className="text-sm font-mono text-slate-500">{sample.accessionNumber}</p>
                       </div>
-                      <StatusBadge status={sample.priority} />
+                      <StatusBadge status={sample.priority ?? "routine"} />
                     </div>
                     <div className="text-sm text-slate-500 pt-2">
                       <p>Tests: {sample.results.length}</p>
@@ -77,7 +77,7 @@ export default function Worklist() {
                   {/* Quick Test Preview */}
                   <div className="p-6 md:w-2/3 bg-slate-50/50">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {sample.results.map((res: any) => (
+                      {sample.results.map((res: SampleResult) => (
                         <div key={res.id} className="flex justify-between items-center p-3 bg-white border rounded-lg">
                           <span className="font-medium text-sm">{res.testType.name}</span>
                           {res.resultValue ? (
@@ -107,7 +107,9 @@ export default function Worklist() {
   );
 }
 
-function ResultEntryDialog({ sample, open, onOpenChange }: { sample: any, open: boolean, onOpenChange: (o: boolean) => void }) {
+type SampleResult = SampleWithPatient["results"][number];
+
+function ResultEntryDialog({ sample, open, onOpenChange }: { sample: SampleWithPatient, open: boolean, onOpenChange: (o: boolean) => void }) {
   const { mutate: updateResult } = useUpdateResult();
   const { mutate: updateStatus } = useUpdateSampleStatus();
   const [localResults, setLocalResults] = useState<Record<number, string>>({});
@@ -117,7 +119,7 @@ function ResultEntryDialog({ sample, open, onOpenChange }: { sample: any, open: 
     setLocalResults(prev => ({ ...prev, [resultId]: value }));
   };
 
-  const allDone = sample.results.every((r: any) => r.resultValue || localResults[r.id]);
+  const allDone = sample.results.every((r: SampleResult) => r.resultValue || localResults[r.id]);
 
   const handleComplete = () => {
     updateStatus({ id: sample.id, status: "completed" });
@@ -143,7 +145,7 @@ function ResultEntryDialog({ sample, open, onOpenChange }: { sample: any, open: 
           </div>
 
           <div className="space-y-4">
-            {sample.results.map((result: any) => (
+            {sample.results.map((result: SampleResult) => (
               <div key={result.id} className="p-4 border rounded-xl hover:border-primary/50 transition-colors">
                 <div className="flex justify-between items-center mb-3">
                   <div>

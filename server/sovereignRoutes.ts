@@ -579,7 +579,7 @@ export function registerSovereignRoutes(app: Express): void {
         labId: patient.labId,
         reasonCode,
         accessScope: "patient_history",
-        executionContext: resolveExecutionContext(req.tenantScope),
+        executionContext: resolveExecutionContext(req.tenantScope).source,
       });
 
       const allSamples = await storage.getSamples(undefined, patientId, undefined);
@@ -1012,7 +1012,7 @@ export function registerSovereignRoutes(app: Express): void {
       await processIdentityVerification(
         patientId,
         input.nationalIdNumber,
-        executionContext,
+        executionContext.source,
         req.staffMember?.id
       );
 
@@ -1050,7 +1050,7 @@ export function registerSovereignRoutes(app: Express): void {
       await processIdentityVerification(
         patientId,
         nationalId,
-        executionContext,
+        executionContext.source,
         req.staffMember?.id
       );
 
@@ -1139,7 +1139,7 @@ export function registerSovereignRoutes(app: Express): void {
       await processIdentityVerification(
         patientId,
         input.nationalIdNumber,
-        executionContext
+        executionContext.source
       );
 
       res.json({
@@ -1176,7 +1176,7 @@ export function registerSovereignRoutes(app: Express): void {
       await processIdentityVerification(
         patientId,
         nationalId,
-        executionContext
+        executionContext.source
       );
 
       const latest = await storage.getLatestVerificationByPatient(patientId);
@@ -1254,7 +1254,7 @@ export function registerSovereignRoutes(app: Express): void {
       await processIdentityVerification(
         patientId,
         input.nationalIdNumber,
-        executionContext,
+        executionContext.source,
         req.staffMember?.id
       );
 
@@ -1292,7 +1292,7 @@ export function registerSovereignRoutes(app: Express): void {
       await processIdentityVerification(
         patientId,
         nationalId,
-        executionContext,
+        executionContext.source,
         req.staffMember?.id
       );
 
