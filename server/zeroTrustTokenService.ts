@@ -70,7 +70,8 @@ export async function rotateIdentityToken(
   if (!current) return null;
   if (current.tokenStatus !== "ACTIVE") return null;
 
-  await storage.updateZeroTrustIdentityStatus(current.id, "ROTATED");
+  const rotatedGraceExpiresAt = new Date(Date.now() + ROTATION_GRACE_MS);
+  await storage.updateZeroTrustIdentityStatus(current.id, "ROTATED", rotatedGraceExpiresAt);
 
   const newIdentityUuid = randomBytes(32).toString("hex").substring(0, 64);
   const rawToken = randomBytes(48).toString("hex");
@@ -131,8 +132,8 @@ export async function validateIdentityToken(
   }
 
   if (identity.tokenStatus === "ROTATED") {
-    const elapsed = Date.now() - (identity.expiresAt?.getTime() || 0);
-    if (elapsed < ROTATION_GRACE_MS) {
+    const rotationGraceExpiresAt = identity.expiresAt?.getTime() || 0;
+    if (rotationGraceExpiresAt > Date.now()) {
       return { valid: true, identity, localOnly: true };
     }
     return { valid: false, reason: "TOKEN_ROTATED_AND_EXPIRED" };
