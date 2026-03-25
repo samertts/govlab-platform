@@ -311,7 +311,7 @@ export interface IStorage {
   createZeroTrustIdentity(identity: InsertZeroTrustIdentity): Promise<ZeroTrustIdentity>;
   getZeroTrustIdentityByUuid(identityUuid: string): Promise<ZeroTrustIdentity | undefined>;
   getZeroTrustIdentitiesByEntity(identityType: string, entityRef: number): Promise<ZeroTrustIdentity[]>;
-  updateZeroTrustIdentityStatus(id: number, tokenStatus: string): Promise<ZeroTrustIdentity | undefined>;
+  updateZeroTrustIdentityStatus(id: number, tokenStatus: string, expiresAt?: Date): Promise<ZeroTrustIdentity | undefined>;
   updateZeroTrustIdentityLastUsed(id: number): Promise<void>;
   getActiveIdentities(identityType?: string): Promise<ZeroTrustIdentity[]>;
   revokeExpiredIdentities(): Promise<number>;
@@ -1793,9 +1793,13 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(zeroTrustIdentities.createdAt));
   }
 
-  async updateZeroTrustIdentityStatus(id: number, tokenStatus: string): Promise<ZeroTrustIdentity | undefined> {
+  async updateZeroTrustIdentityStatus(id: number, tokenStatus: string, expiresAt?: Date): Promise<ZeroTrustIdentity | undefined> {
+    const updatePayload: { tokenStatus: string; expiresAt?: Date } = { tokenStatus };
+    if (expiresAt) {
+      updatePayload.expiresAt = expiresAt;
+    }
     const [updated] = await db.update(zeroTrustIdentities)
-      .set({ tokenStatus })
+      .set(updatePayload)
       .where(eq(zeroTrustIdentities.id, id))
       .returning();
     return updated;

@@ -9,6 +9,9 @@ function getEncryptionKey(): Buffer {
   if (!key) {
     throw new Error("NATIONAL_ID_ENCRYPTION_KEY environment variable is required");
   }
+  if (!/^[a-fA-F0-9]{64}$/.test(key)) {
+    throw new Error("NATIONAL_ID_ENCRYPTION_KEY must be a 64-character hex string (32 bytes)");
+  }
   return Buffer.from(key, "hex");
 }
 
@@ -34,6 +37,9 @@ export function decryptNationalId(ciphertext: string): string {
 
   const iv = Buffer.from(ivHex, "hex");
   const authTag = Buffer.from(authTagHex, "hex");
+  if (iv.length !== IV_LENGTH || authTag.length !== AUTH_TAG_LENGTH) {
+    throw new Error("Invalid encrypted national ID payload");
+  }
   const decipher = createDecipheriv(ALGORITHM, key, iv);
   decipher.setAuthTag(authTag);
 
