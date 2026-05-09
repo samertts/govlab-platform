@@ -17,6 +17,11 @@ const stateChangingMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 function isTrustedOrigin(req: Request): boolean {
   const origin = req.get("origin");
   if (!origin) return true;
+  const trustedOrigins = (process.env.GULA_TRUSTED_ORIGINS || "")
+    .split(",")
+    .map(v => v.trim())
+    .filter(Boolean);
+  if (trustedOrigins.includes(origin)) return true;
   const host = req.get("host");
   if (!host) return false;
   try {
