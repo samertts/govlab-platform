@@ -1,0 +1,58 @@
+name: Build Desktop Artifacts
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Validate required files
+        shell: pwsh
+        run: |
+          $required = @('main.py','requirements.txt','installer/setup.iss')
+          foreach ($f in $required) { if (-not (Test-Path $f)) { throw "Missing required file: $f" } }
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Build EXE
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name Application main.py
+
+      - name: Validate EXE
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'dist/Application.exe')) { throw 'dist/Application.exe not found' }
+
+      - name: Build Inno Setup installer
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          iscc installer/setup.iss
+
+      - name: Validate installer
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'installer/Output/ApplicationSetup.exe')) { throw 'installer/Output/ApplicationSetup.exe not found' }
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: Application-exe
+          path: dist/Application.exe
+
+      - name: Upload Setup
+        uses: actions/upload-artifact@v4
+        with:
+          name: Application-setup
+          path: installer/Output/ApplicationSetup.exe
